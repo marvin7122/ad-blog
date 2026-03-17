@@ -26,19 +26,48 @@ Summary goes here
 
 # Introduction
 ## RDF
-The Resource Description Framework (RDF) is a graph based data model where triples of the form \\((s, p, o)\\) denote
-directed labeled edges \\(s \overset{p}{\rightarrow} o\\) in a graph. RDF is a framework for expressing information about
-*resources*. Resources can be anything, including documents, people, physical objects, and abstract concepts [^1].
+The Resource Description Framework (RDF) is a method to describe and exchange graph data.[^2]
 
-TODO: explain what an RDF graph is, using an example and images.
+RDF allows us to make statements about resources. The format of these statements is simple.
+A statement always has the following structure:\
+`<subject> <predicate> <object>`
 
-TODO: Explain what RDF triples are in detail, using examples.
+An RDF statement expresses a relationship between two resources. The subject and the object represent the two resources
+ being related; the predicate represents the nature of their relationship. The relationship is phrased in a directional
+ way (from subject to object) and is called in RDF a *property*.
 
-TODO: explain that RDF graphs can be represented in different formats. Note that the different formats do not change the
-meaning of the triples, just how they are written.
+RDF is a directed graph composed of such statements (also called triple statements, since one statement consists of
+three parts: subject, predicate, object.).
+A set of RDF statements represent a graph in the following way: Each RDF triple statement is represented by: (1) a node
+for the subject, (2) a directed edge from subject to object, representing a predicate, and (3) a node for the object.
+See Figure 1 for a visual representation.
+
+>![triple.png](img/rdf-triple.png)
+>
+> _Figure 1: Visualization of an RDF triple._
+
+```ntriples
+<Bob> <is a> <person>.
+<Bob> <is a friend of> <Alice>.
+<Bob> <is born on> <the 4th of July 1990>. 
+<Bob> <is interested in> <the Mona Lisa>.
+<the Mona Lisa> <was created by> <Leonardo da Vinci>.
+<the video 'La Joconde à Washington'> <is about> <the Mona Lisa>
+```
+
+The same resource is often referenced in multiple triples.
+In the example above, Bob is the subject of four triples, and the Mona Lisa is the subject of one and the object of two
+triples. This ability to have the same resource be in the subject position of one triple and the object position of
+another makes it possible to find connections between triples, which is an important part of RDF's power.
+
+We can visualize triples as a connected graph. Graphs consists of nodes and arcs.
+The subjects and objects of the triples make up the nodes in the graph; the predicates form the arcs. Fig. 1 shows the
+graph resulting from the sample triples.
 
 ## SPARQL 
-TODO: what is it in one sentence
+SPARQL is an RDF query language, that is, a query language for retrieving and manipulating data stored in RDF format.
+
+
 
 TODO: Explain a very simple example (SELECT) query, also use image
 
@@ -80,3 +109,4 @@ essentially.
 
 References
 [^1]: W3 Org. "RDF Primer" https://www.w3.org/TR/rdf11-primer/ Accessed 2026-03-16.
+[^2]: Wikipedia. "RDF" TODO:wikipedia-link-here Accessed 2026-03-17.
