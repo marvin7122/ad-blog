@@ -178,43 +178,60 @@ CONSTRUCT queries. We exclude JSON from the benchmark, as its more complex
 serialization would conflate format-specific overhead with the cost of the
 CONSTRUCT pipeline itself.
 
-**Methodology.** We use QLever's internal query time, which covers the full
-request handling but excludes network transfer. We run the query once before
-measuring to ensure the index is loaded into the OS page cache, then run five
+**Output format.** SELECT queries are most commonly exported in tabular formats such as TSV or CSV (TODO: quote?).
+CONSTRUCT queries produce RDF graphs, which are most commonly serialized as Turtle or N-Triples (TODO: quote?.
+
+Not all formats are supported by both query forms.
+QLever silently falls back to a default when an unsupported format is requested (Turtle is the default format for
+CONSTRUCT and sparqlJson the default format for SELECT query outputs).
+
+A fair comparison therefore requires formats that both  query forms support natively.
+The formats common to both are TSV, CSV, qleverJson.
+
+We benchmark TSV, CSV, and qleverJson  for the SELECT vs CONSTRUCT comparison.
+Additionally, we report Turtle times for CONSTRUCT queries in isolation, since Turtle is the most common output format
+for RDF graph export (next to N-Triples, which is not supported for construct-query exports at the moment.)
+
+**Methodology.** We use QLever's internal query time, which covers the full request handling but excludes network
+transfer. We run the query once before measuring to ensure the index is loaded into the OS page cache, then run five
 times and report the average.
 
-**Machine.** All measurements were taken at git commit `[TODO: hash]` on a
+**Machine.** All measurements were taken at git `commit af00534d` from the master branch of the qlever repo [^5]) on a
 machine with the following specifications:
-
 - CPU: AMD Ryzen 5 4600G
 - RAM: 30.7 GiB
 - Storage: Lexar NM620 1 TB NVMe SSD
 - OS: Fedora 42, Kernel 6.8.13, x86\_64
 
+The binary was build using the following CMAKE setup:
+`cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_LINKER=/usr/bin/lld ..`
+
 ## Results
 
-| Output format | Row limit | SELECT (s) | CONSTRUCT (s) | Ratio |
-|---------------|-----------|----------- |-------------- |-------|
-| TSV           | 10k       |            |               |       |
-| TSV           | 100k      |            |               |       |
-| TSV           | 1M        |            |               |       |
-| CSV           | 10k       |            |               |       |
-| CSV           | 100k      |            |               |       |
-| CSV           | 1M        |            |               |       |
-| Turtle        | 10k       |            |               |       |
-| Turtle        | 100k      |            |               |       |
-| Turtle        | 1M        |            |               |       |
+| Output format | Row limit | SELECT (ms)    | CONSTRUCT (ms)     | Ratio |
+|---------------|-----------|----------------|------------------- |-------|
+| TSV           | 10k       | 29             | 46                 | 1.59x |
+| TSV           | 100k      | 191            | 363                | 1.90x |
+| TSV           | 1M        | 1575           | 3479               | 1.98x |
+| CSV           | 10k       | 29             | 47                 | 1.62x |
+| CSV           | 100k      | 191            | 362                | 1.90x |
+| CSV           | 1M        | 1738           | 3486               | 2.01x |
+| qleverJson    | 10k       | 39             | 52                 | 1.33x |
+| qleverJson    | 100k      | 272            | 422                | 1.55x |
+| qleverJson    | 1M        | 2580           | 4084               | 1.58x |
+| Turtle        | 10k       | not supported  | 47                 | None  |
+| Turtle        | 100k      | not supported  | 354                | None  |
+| Turtle        | 1M        | not supported  | 3401               | None  |
 
-Note that the `SELECT (s)` and `CONSTRUCT (s)` columns contain the median time over the 5 measured runs.
+TODO: explain what the columns mean
+Note that the `SELECT (ms)` and `CONSTRUCT (ms)` columns contain the median time over the 5 measured runs.
 
-  Observation
+Observation
 
-  The CONSTRUCT export is Nx slower than SELECT export for the same data. The gap scales with the number of result rows.
-  In the next section we examine the original implementation to understand why.
-  
-  ---
-
-
+The CONSTRUCT export is x slower than SELECT export for the same data. The gap scales with the number of result rows,
+since the Ratio increases with the number of result rows (`Row limit`)).
+In the next section we examine the original implementation to understand how we can improve the CONSTRUCT export
+pipeline.
 
 # Original Implementation 
 
