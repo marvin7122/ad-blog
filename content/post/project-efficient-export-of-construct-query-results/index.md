@@ -96,11 +96,39 @@ Alice's interest in the video does not produce a row because no `<was created by
 the video; only combinations, where *all* triple patterns of the WHERE clause match, appear in the result.
 
 ## CONSTRUCT queries 
-TODO: what are CONSTRUCT queries?
+A CONSTRUCT query is a SPARQL query form that produces a new RDF graph rather than a table of variable bindings.
+The CONSTRUCT clause specifies a *graph template*, which is a set of triple patterns that may contain variables and
+constants (TODO: at this point, the reader does not know what a constant is). For each result row (called a query 
+solution in the SPARQL standard) produced by the WHERE clause, the engine substitutes the bound variable values into
+the graph template and adds the resulting triples to the output graph.
+The final output of the CONSTRUCT query is the union of all such triples across all result rows.
 
-TODO: what are CONSTRUCT queries used for / useful for?
+If any instantiation produces a triple containing an unbound variable: that is, a variable for which the current result
+row provides no value — that triple is omitted from the output.
 
-TODO: example construct query?
+Triples in the template that contain no variables at all (called ground triples) appear in the output graph unchanged,
+regardless of the result rows.
+
+--
+Consider the following CONSTRUCT query applied to our example data:
+
+CONSTRUCT {
+?person <has-interest> ?thing .
+}
+WHERE {
+?person <is interested in> ?thing .
+}
+
+This produces the following RDF graph:
+
+```ntriples
+<Bob> <has-interest> <the Mona Lisa>.
+<Alice> <has-interest> <the Mona Lisa>.
+<Alice> <has-interest> <the video 'La Joconde à Washington'>.
+```
+
+Unlike the SELECT query from the previous section, the result is not a table but a new set of RDF triples that can be
+stored, exported, or queried further.
 
 ## QLever 
 TODO: what is qlever in one sentence
