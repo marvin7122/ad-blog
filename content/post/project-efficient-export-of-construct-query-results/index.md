@@ -223,7 +223,7 @@ The binary was build using the following CMAKE setup:
 | Turtle        | 100k      | not supported  | 354                | None  |
 | Turtle        | 1M        | not supported  | 3401               | None  |
 
-The `SELECT (ms)`` and `CONSTRUCT (ms)` columns report the median wall-clock time in milliseconds over five measured runs,
+The `SELECT (ms)` and `CONSTRUCT (ms)` columns report the median wall-clock time in milliseconds over five measured runs,
 as recorded by QLever's internal query timer. The `Ratio` column is the CONSTRUCT time divided by the SELECT time.
 
 **Observation**: The CONSTRUCT export is consitently slower than the equivalent SELECT export acrross all formats and
@@ -237,13 +237,12 @@ overhead in the total time. (TODO: does that really make sense?)
 
 For the turtle format, no SELECT comparison is possible since QLever does not support Turtle output for SELECT queries.
 The absolute CONSTRUCT times for Turtle are comparable to those for TSV and CSV, which makes sense since all three
-formats produce one line per output triple (whereas the qleverJson format procuces more than that).
+formats produce one line per output triple (whereas the qleverJson format produces more than that).
 
 In the next section we examine the original implementation of the CONSTRUCT Export pipeline to understand how we can
 improve it.
 
 # Original Implementation 
-
 TODO: In what kind of worklfow is the construct query export even embedded?
 
 
