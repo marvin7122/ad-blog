@@ -130,12 +130,18 @@ This produces the following RDF graph:
 Unlike the SELECT query from the previous section, the result is not a table but a new set of RDF triples that can be
 stored, exported, or queried further.
 
+CONSTRUCT queries are particularly useful when the goal is not to inspect data in a table,
+but to export or transform it as RDF.
+Common use cases include extracting a subgraph from a large knowledge base for use in another system or producing a
+self-contained RDF file for exchange or archival.
+
 ## QLever 
-TODO: what is qlever in one sentence
+"QLever is a graph database implementing the RDF and SPARQL standards. QLever can efficiently load and query very large 
+datasets, even with hundreds of billions of triples, on a single commodity PC or server."[^4]
+It is a open source project written in the programming language C++ developed by the Chair of Algorithms and 
+Data Structures at the University of Freiburg [^5]
 
 TODO: how does the engine work big picture 
-
-TODO: how do the engine work big picture 
 
 # Problem Statement
 TODO: show that the construct export in comparison to the non-construct export is very slow.
@@ -147,7 +153,7 @@ TODO: "we want to make it faster"
 TODO: In what kind of worklfow is the construct query export even embedded?
 
 
-# Improvement potential for the original Implementation 
+# Analysis of Improvement potential for the original Implementation 
 
 
 # Improved Implementation (Contribution)
@@ -216,3 +222,5 @@ try to improve there next.
 [^1]: W3 Org. "RDF Primer" https://www.w3.org/TR/rdf11-primer/ Accessed 2026-03-16.
 [^2]: Wikipedia. "RDF" TODO:wikipedia-link-here Accessed 2026-03-17.
 [^3]: W3 Org. "SPARQL 1.1 Query Language" https://www.w3.org/TR/sparql11-query/#introduction Accessed 2026-03-18.
+[^4]: "QLever Documentation" https://docs.qlever.dev/ Accessed 2026-03-18.
+[^5]: "qlever" https://github.com/ad-freiburg/qlever Accessed 2026-03-18.
