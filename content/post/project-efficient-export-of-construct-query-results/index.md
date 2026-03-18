@@ -208,7 +208,7 @@ The binary was build using the following CMAKE setup:
 
 ## Results
 
-| Output format | Row limit | SELECT (ms)    | CONSTRUCT (ms)     | Ratio |
+| Output format | LIMIT     | SELECT (ms)    | CONSTRUCT (ms)     | Ratio |
 |---------------|-----------|----------------|------------------- |-------|
 | TSV           | 10k       | 29             | 46                 | 1.59x |
 | TSV           | 100k      | 191            | 363                | 1.90x |
@@ -223,15 +223,24 @@ The binary was build using the following CMAKE setup:
 | Turtle        | 100k      | not supported  | 354                | None  |
 | Turtle        | 1M        | not supported  | 3401               | None  |
 
-TODO: explain what the columns mean
-Note that the `SELECT (ms)` and `CONSTRUCT (ms)` columns contain the median time over the 5 measured runs.
+The `SELECT (ms)`` and `CONSTRUCT (ms)` columns report the median wall-clock time in milliseconds over five measured runs,
+as recorded by QLever's internal query timer. The `Ratio` column is the CONSTRUCT time divided by the SELECT time.
 
-Observation
+**Observation**: The CONSTRUCT export is consitently slower than the equivalent SELECT export acrross all formats and
+row counts. For TSV and CSV the CONSTRUCT export takes approximately 2x as long at 1 million rows. The ratio grows
+slightly with the number of rows (from ~1.6x at 10k rows to ~2x at 1M rows), indicating that the overhead of the
+CONSTRUCT export pipeline scales roughly linearly with the number or result rows.
 
-The CONSTRUCT export is x slower than SELECT export for the same data. The gap scales with the number of result rows,
-since the Ratio increases with the number of result rows (`Row limit`)).
-In the next section we examine the original implementation to understand how we can improve the CONSTRUCT export
-pipeline.
+The ratio is lower for `qleverJson` (~1.6x at 1M rows). This is expected: qleverJson is a more verbose format that
+requires more seralization  work per row for both query forms, which reduces the relative share of CONSTRUCT-specific
+overhead in the total time. (TODO: does that really make sense?)
+
+For the turtle format, no SELECT comparison is possible since QLever does not support Turtle output for SELECT queries.
+The absolute CONSTRUCT times for Turtle are comparable to those for TSV and CSV, which makes sense since all three
+formats produce one line per output triple (whereas the qleverJson format procuces more than that).
+
+In the next section we examine the original implementation of the CONSTRUCT Export pipeline to understand how we can
+improve it.
 
 # Original Implementation 
 
