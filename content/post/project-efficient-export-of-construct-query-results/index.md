@@ -143,10 +143,78 @@ Data Structures at the University of Freiburg [^5]
 
 TODO: how does the engine work big picture 
 
-# Problem Statement
-TODO: show that the construct export in comparison to the non-construct export is very slow.
 
-TODO: "we want to make it faster"
+# Problem Statement
+The CONSTRUCT query export takes the result table produced by the WHERE clause and transforms it into an RDF graph by
+instantiating the CONSTRUCT template for each result row. The resulting triples are then serialized into the requested
+output format and streamed to the client.
+
+To understand whether the old implementation of the CONSTRUCT query export had a meaningful perfomance problem, we
+compare the time QLever takes to export a CONSTRUCT query against an equivalent SELECT query on the same data. Both
+queries run the same WHERE clause and therefore do the same query evaluation work. The only difference between them is
+the export step. Any gap in export time between the two is attributable to the CONSTRUCT export pipeline itself.
+
+## Benchmarking Setup
+
+To measure the cost of the CONSTRUCT export pipeline in isolation, we compare the time QLever takes to answer a
+CONSTRUCT query against an equivalent SELECT query on the same data. Both queries evaluate the same WHERE clause. Any
+perfomance gap between the two is therefore attributable to the CONSTRUCT pipeline itself.
+
+**Query.** We use the following query, which retrieves every triple in the dataset:
+```sparql
+SELECT ?s ?p ?o WHERE { ?s ?p ?o }
+```
+
+For the CONSTRUCT variant, the template directly mirrors the SELECT projection:
+```sparql
+CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }
+```
+
+We vary the number of result rows using `LIMIT` (10,000 / 100,000 / 1,000,000) in order to see whether a potential
+perfomance gap scales with the number of rows.
+
+**Output format.** QLever supports TSV, CSV, Turtle, and its own JSON format for
+CONSTRUCT queries. We exclude JSON from the benchmark, as its more complex
+serialization would conflate format-specific overhead with the cost of the
+CONSTRUCT pipeline itself.
+
+**Methodology.** We use QLever's internal query time, which covers the full
+request handling but excludes network transfer. We run the query once before
+measuring to ensure the index is loaded into the OS page cache, then run five
+times and report the average.
+
+**Machine.** All measurements were taken at git commit `[TODO: hash]` on a
+machine with the following specifications:
+
+- CPU: AMD Ryzen 5 4600G
+- RAM: 30.7 GiB
+- Storage: Lexar NM620 1 TB NVMe SSD
+- OS: Fedora 42, Kernel 6.8.13, x86\_64
+
+## Results
+
+| Output format | Row limit | SELECT (s) | CONSTRUCT (s) | Ratio |
+|---------------|-----------|----------- |-------------- |-------|
+| TSV           | 10k       |            |               |       |
+| TSV           | 100k      |            |               |       |
+| TSV           | 1M        |            |               |       |
+| CSV           | 10k       |            |               |       |
+| CSV           | 100k      |            |               |       |
+| CSV           | 1M        |            |               |       |
+| Turtle        | 10k       |            |               |       |
+| Turtle        | 100k      |            |               |       |
+| Turtle        | 1M        |            |               |       |
+
+Note that the `SELECT (s)` and `CONSTRUCT (s)` columns contain the median time over the 5 measured runs.
+
+  Observation
+
+  The CONSTRUCT export is Nx slower than SELECT export for the same data. The gap scales with the number of result rows.
+  In the next section we examine the original implementation to understand why.
+  
+  ---
+
+
 
 # Original Implementation 
 
