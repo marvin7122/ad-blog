@@ -143,7 +143,6 @@ Data Structures at the University of Freiburg [^5]
 
 TODO: how does the engine work big picture 
 
-
 # Problem Statement
 The CONSTRUCT query export takes the result table produced by the WHERE clause and transforms it into an RDF graph by
 instantiating the CONSTRUCT template for each result row. The resulting triples are then serialized into the requested
@@ -193,8 +192,8 @@ Additionally, we report Turtle times for CONSTRUCT queries in isolation, since T
 for RDF graph export (next to N-Triples, which is not supported for construct-query exports at the moment.)
 
 **Methodology.** We use QLever's internal query time, which covers the full request handling but excludes network
-transfer. We run the query once before measuring to ensure the index is loaded into the OS page cache, then run five
-times and report the average.
+transfer. We run the query once before measuring to ensure the index is loaded into the OS page cache, then run the same
+query five times and report median of the 5  measurements.
 
 **Machine.** All measurements were taken at git `commit af00534d` from the master branch of the qlever repo [^5]) on a
 machine with the following specifications:
@@ -203,7 +202,7 @@ machine with the following specifications:
 - Storage: Lexar NM620 1 TB NVMe SSD
 - OS: Fedora 42, Kernel 6.8.13, x86\_64
 
-The binary was build using the following CMAKE setup:
+The binary was compiled in Release mode using GCC with the LLD linker:
 `cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_LINKER=/usr/bin/lld ..`
 
 ## Results
@@ -223,8 +222,8 @@ The binary was build using the following CMAKE setup:
 | Turtle        | 100k      | not supported  | 354                | None  |
 | Turtle        | 1M        | not supported  | 3401               | None  |
 
-The `SELECT (ms)` and `CONSTRUCT (ms)` columns report the median wall-clock time in milliseconds over five measured runs,
-as recorded by QLever's internal query timer. The `Ratio` column is the CONSTRUCT time divided by the SELECT time.
+The `SELECT (ms)` and `CONSTRUCT (ms)` columns report the median wall-clock time in milliseconds over the five measured
+runs. The `Ratio` column is the CONSTRUCT time divided by the SELECT time.
 
 **Observation**: The CONSTRUCT export is consitently slower than the equivalent SELECT export acrross all formats and
 row counts. For TSV and CSV the CONSTRUCT export takes approximately 2x as long at 1 million rows. The ratio grows
