@@ -172,24 +172,19 @@ CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }
 We vary the number of result rows using `LIMIT` (10,000 / 100,000 / 1,000,000) in order to see whether a potential
 perfomance gap scales with the number of rows.
 
-**Output format.** QLever supports TSV, CSV, Turtle, and its own JSON format for
-CONSTRUCT queries. We exclude JSON from the benchmark, as its more complex
-serialization would conflate format-specific overhead with the cost of the
-CONSTRUCT pipeline itself.
-
 **Output format.** SELECT queries are most commonly exported in tabular formats such as TSV or CSV (TODO: quote?).
-CONSTRUCT queries produce RDF graphs, which are most commonly serialized as Turtle or N-Triples (TODO: quote?.
+CONSTRUCT queries produce RDF graphs, which are most commonly serialized as Turtle or N-Triples (TODO: quote?).
 
 Not all formats are supported by both query forms.
-QLever silently falls back to a default when an unsupported format is requested (Turtle is the default format for
-CONSTRUCT and sparqlJson the default format for SELECT query outputs).
+QLever silently falls back to a default when an unsupported format is requested (`turtle` is the default format for
+CONSTRUCT and `sparqlJson` the default format for SELECT query outputs).
 
 A fair comparison therefore requires formats that both  query forms support natively.
 The formats common to both are TSV, CSV, qleverJson.
 
-We benchmark TSV, CSV, and qleverJson  for the SELECT vs CONSTRUCT comparison.
-Additionally, we report Turtle times for CONSTRUCT queries in isolation, since Turtle is the most common output format
-for RDF graph export (next to N-Triples, which is not supported for construct-query exports at the moment.)
+We benchmark `TSV`, `CSV`, and `qleverJson`  for the SELECT vs CONSTRUCT comparison.
+Additionally, we report `Turtle` times for CONSTRUCT queries in isolation, since `Turtle` is the most common output
+format for RDF graph export (next to `N-Triples`, which is not supported for construct-query exports at the moment.)
 
 **Methodology.** We use QLever's internal query time, which covers the full request handling but excludes network
 transfer. We run the query once before measuring to ensure the index is loaded into the OS page cache, then run the same
@@ -242,7 +237,46 @@ In the next section we examine the original implementation of the CONSTRUCT Expo
 improve it.
 
 # Original Implementation 
-TODO: In what kind of worklfow is the construct query export even embedded?
+Section structure: Original Implementation
+
+1. Where it fits in
+Figure X (TODO) shows how a CONSTRUCT query is processed end-to-end in QLever.
+
+
+When a client sends an HTTP request containing a SPARQL CONSTRUCT query,
+they query string is parsed by the `SparqlParser` into a `ParsedQuery`,
+which is a structured internal representation of said query.
+
+The query planner and engine use this representation to compute the result of the WHERE clause by traversing the on-disk
+index (TODO: explain what an index is first.). The result is a table of 64-bit value IDs (`IdTable` object), bundled
+with a `LocalVocab` that holds any IDs coined during query execution (TODO: explain what it means that IDs are coined
+during query execution) that are not present in the main vocabulary (TODO: explain what the main vocabulary is first.).
+
+This result is passed to the CONSTRUCT export stage (`ConstructTripleGenerator`). The export stage instantiates the
+CONSTRUCT template for each result row, translating the ValueId objects back into human-readable RDF terms by looking
+them up in the on-disk vocabulary.
+
+The resulting RDF triples are serialized into the requested output format and streamed back to the client as an HTTP
+response.
+
+2. How the original implementation worked
+Walk through ConstructQueryEvaluator at a high level:
+- For each result row
+- For each position in each template triple (subject, predicate, object)
+- Evaluate the term: if it is a constant IRI/literal, convert it to a string; if it is a variable, look up its value ID in the row, then look up that ID in the vocabulary
+- If any term is unbound or invalid, drop the triple
+- Serialize the resulting string triple to the output stream
+
+Key point to highlight: every evaluation is stateless — no memory of previous rows, no reuse of previous lookups.
+
+3. Profiler evidence
+A flamegraph or perf stat output showing that vocabulary lookup dominates the runtime. Do you have a profile from before your changes that we can reference here?
+
+4. Where the bottleneck is
+Derive from the profiler: the vocabulary is stored on disk; every ID-to-string translation requires a disk read 
+(or at best an OS page cache hit).
+With N result rows and T template positions, the original implementation performs up to N×T vocabulary lookups per
+query, with no sharing between rows.
 
 
 # Analysis of Improvement potential for the original Implementation 
