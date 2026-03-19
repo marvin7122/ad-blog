@@ -242,7 +242,6 @@ improve it.
 ## 1. Where it fits in
 Figure X (TODO) shows how a CONSTRUCT query is processed end-to-end in QLever.
 
-
 When a client sends an HTTP request containing a SPARQL CONSTRUCT query, the QLever engine processes it in three steps
 before the export begins.
 
@@ -262,19 +261,71 @@ representation up in the `LocalVocab` or the main `vocabulary` on disk), substit
 template positions, and emits the resulting triples into the requested output format, which is then streamed back to the
 client in the appropriate serialization format.
 
-## 2. How the original implementation worked in detail
-Walk through the original construct export:
-- For each result row
-- For each position in each template triple (subject, predicate, object)
-- Evaluate the term: if it is a constant IRI/literal, convert it to a string; if it is a variable, look up its value ID in the row, then look up that ID in the vocabulary
-- If any term is unbound or invalid, drop the triple
-- Serialize the resulting string triple to the output stream
+## 2. How the original implementation worked
 
-Key point to highlight: every evaluation is stateless — no memory of previous rows, no reuse of previous lookups.
+The core of the CONSTRUCT export is a single function: `constructQueryResultToTriples`. Its structure is a
+straightforward nested loop: for each row in the result table (the table which is the result from computing the WHERE clause of
+the CONSTRUCT query) iterate over the triple patterns in the CONSTRUCT template and evaluate each triple.
+Evaluating a triple means resolving each of its three positions (subject, predicate, object) to a concrete string.
+If all three resolve successfully, the triple is emitted.
 
-Maybe by example.
+To make this concrete, suppose the query is:
 
-3. Profiler evidence
+```sparql
+CONSTRUCT { ?person <has-interest> ?thing }
+WHERE     { ?person <is interested in> ?thing }
+```
+
+Let us walk through the execution of this CONSTRUCT query on the example knowledge base (TODO: back reference to the KB
+from above). The QLever engine executes the WHERE clause and produces the following `IdTable` as result:
+
+| row | `?person` (col 0) | `?thing` (col 1) |
+|-----|-------------------|------------------|
+| 0   | `VocabId(42)`     | `VocabId(17)`    |
+| 1   | `VocabId(99)`     | `VocabId(17)`    |
+
+Each cell of the table holds a `ValueId`. For IRIs and literals stored in the main vocabulary, this is a `VocabIndex` —
+an opaque integer that points into the on-disk vocabulary.
+
+The CONSTRUCT template `{ ?person <has-interest> ?thing }` is represented internally as a list of `GraphTerm` triples.
+Each position in a triple is one of: a `Variable`, an `Iri`, a `Literal`, or a `BlankNode`. How a `GraphTerm` is
+evaluated depends on its type:
+
+- **`Iri` or `Literal`**: the string representation is stored directly in the object and is returned immediately,
+  without any vocabulary lookup.
+- **`Variable`**: the variable's column index is looked up in the `IdTable`, the `ValueId` for the current row is
+  read, and then resolved to a string via a vocabulary lookup.
+- **`BlankNode`**: the identifier is constructed from the blank node's label and the current row number, producing a
+  unique string such as `_:g42_b0`. No vocabulary lookup is needed (TODO: explain somwhere earlier what a BlankNode is).
+
+**Processing row 0:**
+
+The template triple `?person <has-interest> ?thing` is evaluated term by term. The subject `?person` is a `Variable`,
+so the implementation reads column 0 of the current result table row, obtaining `VocabId(42)`, and resolves it via a
+vocabulary lookup to `"<Bob>"`. The predicate `<has-interest>` is an `Iri`, so its string is returned directly from the object —
+`"<has-interest>"` — without any lookup. The object `?thing` is again a `Variable`; column 1 yields `VocabId(17)`,
+which resolves to `"<the Mona Lisa>"`.
+
+The function emits a `StringTriple("<Bob>", "<has-interest>", "<the Mona Lisa>")`.
+
+**Processing row 1:**
+
+The same template triple is evaluated again from scratch. The subject `?person` resolves via column 0 to `VocabId(99)`,
+which a vocabulary lookup turns into `"<Alice>"`. The predicate `<has-interest>` is returned directly as before. The
+object `?thing` again yields `VocabId(17)` from column 1 — the same `ValueId` as in row 0 — which is looked up
+independently, again producing `"<the Mona Lisa>"`.
+
+The function emits a `StringTriple("<Alice>", "<has-interest>", "<the Mona Lisa>")`.
+
+**Serialization.** Once `constructQueryResultToTriples` has yielded a `StringTriple`, a format-specific serializer
+produces a stream of string objects according to the output serialization format specified for the query.
+The output format is determined once per request from the HTTP `Accept` header.
+For Turtle, the triple is written as `subject predicate object .`.
+For TSV and CSV, the three strings are escaped and joined with a tab or comma separator.
+For QLever JSON, the triple is encoded as a JSON object. The serialized output is streamed directly to the
+HTTP response.
+
+## 3. Profiler evidence
 A flamegraph or perf stat output showing that vocabulary lookup dominates the runtime. Do you have a profile from before your changes that we can reference here?
 
 4. Where the bottleneck is
