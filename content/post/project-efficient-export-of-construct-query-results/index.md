@@ -200,6 +200,8 @@ machine with the following specifications:
 The binary was compiled in Release mode using GCC with the LLD linker:
 `cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_LINKER=/usr/bin/lld ..`
 
+TODO: rerun the benchmark at git commit a5e4bf705f003cb3b0477c068966a633a15fb378 (since I did the refactor afterwards)
+
 ## Results
 
 | Output format | LIMIT     | SELECT (ms)    | CONSTRUCT (ms)     | Ratio |
@@ -237,30 +239,31 @@ In the next section we examine the original implementation of the CONSTRUCT Expo
 improve it.
 
 # Original Implementation 
-Section structure: Original Implementation
-
-1. Where it fits in
+## 1. Where it fits in
 Figure X (TODO) shows how a CONSTRUCT query is processed end-to-end in QLever.
 
 
-When a client sends an HTTP request containing a SPARQL CONSTRUCT query,
-they query string is parsed by the `SparqlParser` into a `ParsedQuery`,
-which is a structured internal representation of said query.
+When a client sends an HTTP request containing a SPARQL CONSTRUCT query, the QLever engine processes it in three steps
+before the export begins.
 
-The query planner and engine use this representation to compute the result of the WHERE clause by traversing the on-disk
-index (TODO: explain what an index is first.). The result is a table of 64-bit value IDs (`IdTable` object), bundled
-with a `LocalVocab` that holds any IDs coined during query execution (TODO: explain what it means that IDs are coined
-during query execution) that are not present in the main vocabulary (TODO: explain what the main vocabulary is first.).
+1) First, the query string is parsed into a `ParsedQuery`, which is a structured internal representation of the query
+(TODO: explain what "structured internal representation" means.) 
+2) Second, a `QueryPlanner` derives a `QueryExecutionTree` fro the `ParsedQuery`, which is the physical execution plan
+for the query.
+3) Third, the `QueryExecutionTree` is executed against the index (TODO: explain what an index is first), producing the
+ result of the where clause as a `Result` object. The `Result` contains an `IdTable`: a table of rows where each row
+represents a query solution and each cell holds a `ValueId`, which is a compact 64-bit integer encoding of an RDF term.
+The `Result` also contains a `LocalVocab` object, which is an in-memory vocabulary, which holds RDF terms created during
+query execution that are not present in the main on-disk vocabulary (TODO: explain what a vocabulary is.)
 
-This result is passed to the CONSTRUCT export stage (`ConstructTripleGenerator`). The export stage instantiates the
-CONSTRUCT template for each result row, translating the ValueId objects back into human-readable RDF terms by looking
-them up in the on-disk vocabulary.
+This `Result` is the input to the CONSTRUCT export. For each row in the `IdTable`, the export instantiates the CONSTRUCT
+ template: it resolves each `ValueId` back into a human-readable RDF term string (by looking the corresponding string
+representation up in the `LocalVocab` or the main `vocabulary` on disk), substitutes the resolved strings into the
+template positions, and emits the resulting triples into the requested output format, which is then streamed back to the
+client in the appropriate serialization format.
 
-The resulting RDF triples are serialized into the requested output format and streamed back to the client as an HTTP
-response.
-
-2. How the original implementation worked
-Walk through ConstructQueryEvaluator at a high level:
+## 2. How the original implementation worked in detail
+Walk through the original construct export:
 - For each result row
 - For each position in each template triple (subject, predicate, object)
 - Evaluate the term: if it is a constant IRI/literal, convert it to a string; if it is a variable, look up its value ID in the row, then look up that ID in the vocabulary
@@ -268,6 +271,8 @@ Walk through ConstructQueryEvaluator at a high level:
 - Serialize the resulting string triple to the output stream
 
 Key point to highlight: every evaluation is stateless — no memory of previous rows, no reuse of previous lookups.
+
+Maybe by example.
 
 3. Profiler evidence
 A flamegraph or perf stat output showing that vocabulary lookup dominates the runtime. Do you have a profile from before your changes that we can reference here?
