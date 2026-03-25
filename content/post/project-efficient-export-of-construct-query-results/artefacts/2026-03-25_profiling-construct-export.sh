@@ -11,10 +11,14 @@ OUTPUT_DIR="./profiles"
 WARMUP_WAIT=10 # seconds to wait for server to start
 INDEX_DIR="/home/userNoPriv/code/qlever/qlever-indices/dblp/"
 
+# Configuration
+LOG_DIR="./logs"
+
 CONSTRUCT_QUERY="CONSTRUCT%20%7B%20%3Fs%20%3Fp%20%3Fo%20%7D%20WHERE%20%7B%20%3Fs%20%3Fp%20%3Fo%20%7D%20LIMIT%2010000000"
 SELECT_QUERY="SELECT%20%3Fs%20%3Fp%20%3Fo%20WHERE%20%7B%20%3Fs%20%3Fp%20%3Fo%20%7D%20LIMIT%2010000000"
 
 mkdir -p "$OUTPUT_DIR"
+mkdir -p "$LOG_DIR"
 
 run_profile() {
   local label="$1" # e.g. "construct_warm"
@@ -23,8 +27,8 @@ run_profile() {
 
   echo "=== Profiling: $label ==="
 
-  # Start a fresh server instance
-  "$SERVER_BIN" $SERVER_ARGS &
+  # Start a fresh server instance, redirect its output to a log file
+  "$SERVER_BIN" $SERVER_ARGS >"$LOG_DIR/${label}_server.log" 2>&1 &
   SERVER_PID=$!
   echo "Server started (PID $SERVER_PID), waiting $WARMUP_WAIT seconds..."
   sleep "$WARMUP_WAIT"
@@ -32,14 +36,14 @@ run_profile() {
   # Warm or cold cache
   if [ "$warm" = "warm" ]; then
     echo "Warming cache..."
-    curl -sf "http://localhost:$SERVER_PORT/?query=$query&action=sparql_query" >/dev/null
+    curl -sf "http://localhost:$SERVER_PORT/?query=$query&action=sparql_query" >"$LOG_DIR/${label}_warmup_response.txt"
   else
     echo "Evicting vocabulary files from page cache..."
     echo "Pages resident before eviction:"
-    vmtouch "$INDEX_DIR"
+    vmtouch "$INDEX_DIR" | tee "$LOG_DIR/${label}_vmtouch_before.txt"
     vmtouch -e "$INDEX_DIR"
     echo "Pages resident after eviction:"
-    vmtouch "$INDEX_DIR"
+    vmtouch "$INDEX_DIR" | tee "$LOG_DIR/${label}_vmtouch_after.txt"
   fi
 
   # Record
@@ -48,7 +52,7 @@ run_profile() {
   PERF_PID=$!
   sleep 1 # give perf time to attach to all threads
   echo "Recording... sending query."
-  curl -sf "http://localhost:$SERVER_PORT/?query=$query&action=sparql_query" >/dev/null
+  curl -sf "http://localhost:$SERVER_PORT/?query=$query&action=sparql_query" >"$LOG_DIR/${label}_query_response.txt"
 
   kill "$PERF_PID"
   wait "$PERF_PID" 2>/dev/null || true
