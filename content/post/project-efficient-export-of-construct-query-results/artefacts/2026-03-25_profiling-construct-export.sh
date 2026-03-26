@@ -6,7 +6,7 @@ set -euo pipefail
 SERVER_BIN="/home/userNoPriv/code/qlever/qlever-code/build-profile-20260325/qlever-server"
 SERVER_PORT=7001
 INDEX_BASENAME="/home/userNoPriv/code/qlever/qlever-indices/dblp/dblp"
-SERVER_ARGS="-i $INDEX_BASENAME -p $SERVER_PORT" # add your index path etc. here
+SERVER_ARGS="-i $INDEX_BASENAME -p $SERVER_PORT --default-query-timeout 3600s" # add your index path etc. here
 OUTPUT_DIR="./profiles"
 WARMUP_WAIT=10 # seconds to wait for server to start
 INDEX_DIR="/home/userNoPriv/code/qlever/qlever-indices/dblp/"
@@ -14,8 +14,8 @@ INDEX_DIR="/home/userNoPriv/code/qlever/qlever-indices/dblp/"
 # Configuration
 LOG_DIR="./logs"
 
-CONSTRUCT_QUERY="CONSTRUCT%20%7B%20%3Fs%20%3Fp%20%3Fo%20%7D%20WHERE%20%7B%20%3Fs%20%3Fp%20%3Fo%20%7D%20LIMIT%2010000000"
-SELECT_QUERY="SELECT%20%3Fs%20%3Fp%20%3Fo%20WHERE%20%7B%20%3Fs%20%3Fp%20%3Fo%20%7D%20LIMIT%2010000000"
+CONSTRUCT_QUERY="CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o } LIMIT 10000000"
+SELECT_QUERY="SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10000000"
 
 mkdir -p "$OUTPUT_DIR"
 mkdir -p "$LOG_DIR"
@@ -27,6 +27,13 @@ run_profile() {
 
   echo "=== Profiling: $label ==="
 
+  # Kill any existing process on the port before starting a fresh server
+  if lsof -ti:$SERVER_PORT >/dev/null 2>&1; then
+    echo "Killing existing process on port $SERVER_PORT..."
+    lsof -ti:$SERVER_PORT | xargs kill -9
+    sleep 1
+  fi
+
   # Start a fresh server instance, redirect its output to a log file
   "$SERVER_BIN" $SERVER_ARGS >"$LOG_DIR/${label}_server.log" 2>&1 &
   SERVER_PID=$!
@@ -36,7 +43,10 @@ run_profile() {
   # Warm or cold cache
   if [ "$warm" = "warm" ]; then
     echo "Warming cache..."
-    curl -sf "http://localhost:$SERVER_PORT/?query=$query&action=sparql_query" >"$LOG_DIR/${label}_warmup_response.txt"
+    curl -f -G "http://localhost:$SERVER_PORT/" \
+      --data-urlencode "query=$query" \
+      --data-urlencode "action=sparql_query" \
+      >/dev/null
   else
     echo "Evicting vocabulary files from page cache..."
     echo "Pages resident before eviction:"
@@ -48,13 +58,17 @@ run_profile() {
 
   # Record
   local perf_out="$OUTPUT_DIR/${label}.perf.data"
-  perf record -g -F 997 --per-thread -p "$SERVER_PID" -o "$perf_out" &
+  perf record --call-graph fp --freq=997 -p "$SERVER_PID" -o "$perf_out" &
   PERF_PID=$!
   sleep 1 # give perf time to attach to all threads
   echo "Recording... sending query."
-  curl -sf "http://localhost:$SERVER_PORT/?query=$query&action=sparql_query" >"$LOG_DIR/${label}_query_response.txt"
-
-  kill "$PERF_PID"
+  curl -sf -X POST "http://localhost:$SERVER_PORT/query" \
+    -H "Content-Type: application/sparql-query" \
+    -H "Accept: text/tab-separated-values" \
+    --data-binary "$query" \
+    --max-time 3600 \
+    >/dev/null
+  kill -SIGINT "$PERF_PID"
   wait "$PERF_PID" 2>/dev/null || true
 
   # Generate flamegraph

@@ -381,8 +381,7 @@ Phase 1 runs once per query, before any rows of the result table are processed.
 
 ---
 ### Phase 2 — Variable resolution (ConstructBatchEvaluator / evaluateBatch)
-**Motivation.** Phase 1 removed the cost of re-evaluating constants. What remains is resolving `ValueId`s for variable
-positions. Remember that resolving those terms requires vocabulary lookups and are expensive since the vocabulary is
+**Motivation.** Phase 1 removed the cost of re-evaluating constants. What remains is resolving `ValueId`s for variable positions. Remember that resolving those terms requires vocabulary lookups and are expensive since the vocabulary is
 stored on disk. Two properties can be exploited to do this efficiently.
 
 First, the `IdTable` is stored in column-major order: each column is a contiguous array in memory. If we fetch all `Id`
@@ -468,6 +467,17 @@ and report the median wall-clock time for the query as reported by the qlever en
 overhead. Each measurement uses a fresh server instance to avoid interference from QLever's internal query cache.
 We report times in milliseconds; ratios are new implementation time divided by old implementation time (lower is better).
 
+Measurements taken on `construct-pipeline-refactor` branch at `git commit  0480d95`
+(https://github.com/marvin7122/qlever/commit/0480d959a02b04d69b017364423ce1670ca833d4).
+
+The build was configured using the following CMake settings:
+`cmake -B build-0480d959 \
+-DCMAKE_BUILD_TYPE=Release \
+-DCMAKE_C_COMPILER=gcc \
+-DCMAKE_CXX_COMPILER=g++ \
+-DCMAKE_LINKER=/usr/bin/lld`
+
+
 ### Experiment 1: Baseline SPO query
 First, let us use the same `CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }` query from the Problem Statement so we can
 compare the old and new implementation directly. This allows us to connect back to the original overhead reported there
@@ -487,6 +497,7 @@ and see how much of it the new implementation eliminates.
 | Turtle     | 10k   | 47       | 25       | 1.88x   |
 | Turtle     | 100k  | 358      | 137      | 2.61x   |
 | Turtle     | 1M    | 3389     | 1184     | 2.86x   |
+TODO: add export times etc for 10M rows
 
 **Observation.** The new implementation is consistently faster than the original across all formats and row counts.
 The speedup grows with the number of result rows — from roughly 1.6–1.9x at 10k rows to 2.4–2.9x at 1M rows —
@@ -524,6 +535,8 @@ therefore entirely attributable to how efficiently the two implementations handl
 | Turtle     | 10k   | 13       | 18       | 0.72x   |
 | Turtle     | 100k  | 30       | 29       | 1.03x   |
 | Turtle     | 1M    | 157      | 160      | 0.98x   |
+TODO: add export times etc for 10M rows
+
 
 **Observation.** The new implementation shows no meaningful speedup over the original for a constants-only template.
 The ratios range from 0.72x to 1.31x with no consitent trend and converge to 1.00x at 1M rows across the three measured
@@ -543,13 +556,18 @@ The new implementation achieves a 2.7-2.9x speedup over the original for TSV, CS
 To understand where the remaining time goes and to motivate concrete directions for future work, we profile the
 CONSTRUCT export pipeline and compare it against an equivalent SELECT export.
 
+TODO: the speedup is way larger for the 10M rows export.
+
+
 **Choice of queries.** We profile `CONSTRUCT {?s ?p ?o} WHERE { ?s ?p ?o } LIMIT 10000000` and its SELECT equivalent
 `SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10000000` side by side. Both queries evaluate the same WHERE clause; any
 difference in their profiles is  therefore attributable to the CONSTRUCT export pipeline itself. The SPO query is the
 most informative subject for profiling because every result row contains three variable positions, each of which must be
 resolved via a vocabulary lookup. It maximises the load on the vocabulary access path and represents the worst case for
 the pipeline we want to understand. We use the 10 million limit, in order to be able to gather more data in the
-profiling.
+profiling. Both queries are exported in TSV format. TSV is supported by both query forms and has minimal per-row
+serialization overhead. Using the same format for both queries also ensures that any difference between the two profiles
+is attributable to improvements the CONSTRUCT pipeline itself rather than to format differences.
 
 **Tool.** We use `perf record`, a statistical sampling profiler that interrupts the process at a fixed frequency and
 records the current call stack at each sample. After enough samples, the aggregate reveals which functions account for
@@ -562,8 +580,15 @@ same optimization level (TODO: verify), but `RelWithDebInfo` retains debug symbo
 function addresses to human-readable names and to correctly attribute time to inlined call sites. We additionally pass
 `-fno-omit-frame-pointer`, which restores the frame pointer register. This flag restores the frame pointer at negligible
 runtime cost, giving `perf` reliable call stack reconstruction.
+
 The cmake command used is:
-`cmake -B build-profile-20260325   -DCMAKE_BUILD_TYPE=RelWithDebInfo   -DCMAKE_C_COMPILER=gcc   -DCMAKE_CXX_COMPILER=g++   -DCMAKE_LINKER=/usr/bin/lld   -DCMAKE_CXX_FLAGS="-fno-omit-frame-pointer"   -DCMAKE_C_FLAGS="-fno-omit-frame-pointer"`
+`cmake -B build-profile-20260325 \
+-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+-DCMAKE_C_COMPILER=gcc \
+-DCMAKE_CXX_COMPILER=g++ \
+-DCMAKE_LINKER=/usr/bin/lld \
+-DCMAKE_CXX_FLAGS="-fno-omit-frame-pointer" \
+-DCMAKE_C_FLAGS="-fno-omit-frame-pointer"`
 
 **Cache state.** We run each query under two cache conditions.
 
@@ -574,41 +599,86 @@ disk, so the flamegraph reflects decompression and string construction work rath
 
 In the *cold-cache* run, we evict the vocabulary file from the OS page cache immediately before recording using
 `vmtouch -e`. vmtouch is a utility that inspects and manipulates the page cache residency of specific files.
-The `-e` flag evicts all pages of the given file from the page cache, forcing subsequent reads to go to disk.
-We verify the eviction worked by running `vmtouch` before and after (it reports the number of pages currently resident 
-in the page cache for that file/directory, which should fall to zero after eviction.) 
+The `-e` flag evicts all pages of the given file (the files in that subdirectory) from the page cache,
+forcing subsequent reads to go to disk. We verify the eviction worked by running `vmtouch` before and after
+(it reports the number of pages currently resident  in the page cache for that file/directory, which should fall to zero after eviction.) 
 Every vocabulary lookup that misses the LRU cache in the CONSTRUCT export pipeline now requires a real disk read.
 Because `perf record` is an on-CPU profiler, it collects no samples while the process is blocked waiting for disk (the
 process is simply not scheduled during that time.) A sparse flamegraph from the cold-cache run would therefore be
-informative in its own right: it would indicate that the dominant cost is not CPU work but I/O wait, and that `perf
-record` is the wrong tool for that scenario. In that case we follow up with `bftrace` using an off-CPU flamegraph, which
-captures the call stack at the moment the process is put to sleep and measures how long it stays blocked, attributing
-disk-wait time to the code that triggered it.
+informative in the following way: it would indicate that the dominant cost is not CPU work but I/O wait.
 
 **Recording procedure.** For each run we start a fresh server instance to avoid QLever's internal query result cache 
 returning a pre-computed answer. We attach `perf record` to the running server process, issue the measured query,
 and stop recording once the response is complete. We automate the full recording procedure in a single script that
 starts a fresh server instance for each run, handles cache warming or dropping as appropriate, attaches `perf record`,
 issues the query, and generates the flamegraph.
-The script is available in the repository at `artefacts/2026-03-25_profiling-construct-export.sh`.
+(The script is available in the repository at `artefacts/2026-03-25_profiling-construct-export.sh`.)
+The exact perf record script used is:
+`perf record --call-graph fp --freq=997 -p "$SERVER_PID" -o "$perf_out" &`, where `SERVER_PID` is the process id of the
+`qlever-server` binary process that is running and `perf_out` is the file to which the profiling data should be written.
+A note on thread monitoring: `perf record` supports a `--per-thread` flag which attaches a separate monitoring context
+to each thread that exists at the moment `perf` attaches. We initially used this flag, but it produced nearly-empty
+profile data, despite the queries running for up to 45 seconds. The reason is that QLever is an HTTP server that spawns
+a new worker thread for each incoming request (TODO: citation / proof/ code file reference?). With `--per-thread`, 
+`perf` only monitors threads that that already exist at attach time, threads spawned afterwards are not followed.
+Since the query worker thread is created only when the HTTP request for the requested query arrives (which happens
+after `perf` has already attached) it was never monitored. Without `--perf-thread`, `perf` attaches to the process assembly
+a whole and automatically follows all threads including those spawned after attachment, which is the correct behaviour 
+for profiling a server process where query work happens on dynamically created threads.
+We give perf one second to attach before issuing the query, then send SIGINT rather than SIGTERM to stop it gracefully
+after the query completes, ensuring all buffered samples are flushed to disk before perf exits:
+
+```bash
+  perf record --call-graph fp --freq=997 -p "$SERVER_PID" -o "$perf_out" &
+  PERF_PID=$!
+  sleep 1 # give perf time to attach to all threads
+  echo "Recording... sending query."
+  curl -sf "http://localhost:$SERVER_PORT/?query=$query&action=sparql_query" >/dev/null
+  kill -SIGINT "$PERF_PID"
+  wait "$PERF_PID" 2>/dev/null || true
+
+```
+
 The sampling frequency is set to 997 Hz rather than a round number to avoid accidentally synchronising with periodic 
 system events that fire at round-number intervals, which would bias the sample distribution.
-The flamegraph is generated with Brendan Gregg's FlameGraph scripts.
 
+## Results and Observations
+**wall-clock times**. Before examining the flamegraphs, it is worth noting the query wall-clock times as reported by
+QLevers internal timer, which are recorded in the accompanying server logs (TODO: maybe create git repo where we can put
+all the scripts and link to them from here?). The construct warm query completed in 6,299 ms and the construct cold query
+in 6,583 ms. The select warm query completed in 10,581 ms and the select cold query in 11,083 ms.
 
+Two things stand out immediately. Firs, CONSTRUCT is substantially *faster* than SELECT at 10 million rows in TSV format
+(roughly 6.3 seconds vs 10,9 seconds). This is the opposite of the relationship we observed at 1 million rows in the
+evaluation section, where CONSTRUCT was consistently 2x slower than SELECT. We will return to this reversal below when
+the flamegraphs make the reason clear. Second, the warm/cold difference is remarkably small for both queries: 284 ms for
+CONSTRUCT and 232 ms for SELECT. This means evicting the vocabulary from the OS page cache has almost no effect on total
+query time. 
+
+**Cache eviction verification.** The vmtouch logs confirm that the page cache eviction worked correctly.
+Before eviction, approximately 238 MB of the index directory's 32 GB was resident in the page cache (0.72%).
+After eviction, this dropped to 192 KB (0.0006%). Any vocabulary lookups that miss the LRU cache in the cold run
+therefore genuinely go to disk.
+(TODO: maybe we should be more precise about what we are dropping from the os page cache, but that would probably need
+us to specify concretely what each file stands for...)
+
+**Construct warm-cache profile.** The flamegraph for the construct warm run shows FormattedTripleAdapter::get (the
+top-level entry point of the export pipeline) accounting for 81% of total CPU time.
 
 
 TODO: make a note here that we the accompanying log files are contained in ...
 
-TODO:Outlook how we can further improve the performance of exporting results, i.e. turning ids into Iris/Literals
-essentially.
+TODO:Outlook how we can further improve the performance of exporting results: batched reads from disk.
 
 TODO: show profile that shows that the largest part of time is needed for the Vocabulary lookup and say that we should
 try to improve there next.
 
-TODO: how large of space does the Idcache take up? Measure rss resident set size.
+TODO: Possible future improvement: how large of space does the Idcache take up? Measure rss resident set size. How
+effective is it? How effective is it accross different queries? Measure on a bigger index, wikidata for example.
 
-TODO: how large is the cache? Measure rss resident set size.
+TODO: what strikes me as peculiar is that the select-cold query takes 45,577 ms and construct cold takes 6,063 ms at 10M
+rows. We should probably add the 10M rows benchmark also to the evaluation section, since this is a very large
+difference. (solved: qlever-json format vs turtle)
 
 
 # References
