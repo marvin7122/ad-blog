@@ -453,7 +453,7 @@ formats.
 wraps it either in a `FormattedTripleAdapter` or a `StringTripleAdapter` (phase 4), depending on the requested output
 format. The per-chunk ranges are joined into a flat lazy output stream and passed directly to the HTTP response writer.
 
-# Evaluation
+# Evaluation of original implementation
 
 We evaluate the improved CONSTRUCT export pipeline against the original implementation on the DBLP dataset.
 We design targeted experiments that aim to highlight the contribution of each individual optimization, as well as
@@ -643,43 +643,115 @@ The sampling frequency is set to 997 Hz rather than a round number to avoid acci
 system events that fire at round-number intervals, which would bias the sample distribution.
 
 ## Results and Observations
-**wall-clock times**. Before examining the flamegraphs, it is worth noting the query wall-clock times as reported by
-QLevers internal timer, which are recorded in the accompanying server logs (TODO: maybe create git repo where we can put
-all the scripts and link to them from here?). The construct warm query completed in 6,299 ms and the construct cold query
-in 6,583 ms. The select warm query completed in 10,581 ms and the select cold query in 11,083 ms.
+**wall-clock times**.
+The construct warm query completed in 6,299 ms and the construct cold query in 6,583 ms,
+which is a difference of only 284 ms.
+The select warm query completed in 10,851 ms and the select cold query 11,083 ms,
+a difference of only 232 ms.
+Two things stand out.
+First, CONSTRUCT is substantially faster than SELECT at 10 million rows (roughly 6.3 seconds vs 10.9 seconds),
+the opposite relationship we observed at 1 million rows in the evaluation of the original implementation section.
+Second, the warm/cold difference is less than 5% for both queries
+Evicting the entire index directory from OS page cache changes total query time by only a few hundred milliseconds.
+This might be evidence that the LRU cache is absorbing a vast majority vocabulary lookups before they reach disk,
+even on a cold first run. 
 
-Two things stand out immediately. Firs, CONSTRUCT is substantially *faster* than SELECT at 10 million rows in TSV format
-(roughly 6.3 seconds vs 10,9 seconds). This is the opposite of the relationship we observed at 1 million rows in the
-evaluation section, where CONSTRUCT was consistently 2x slower than SELECT. We will return to this reversal below when
-the flamegraphs make the reason clear. Second, the warm/cold difference is remarkably small for both queries: 284 ms for
-CONSTRUCT and 232 ms for SELECT. This means evicting the vocabulary from the OS page cache has almost no effect on total
-query time. 
+**Flame graph analysis**.
+The construct-warm flamegraph shows `FormattedTripleAdapter::get` (the top level entry point of the export pipeline)
+accounting for 81% of total CPU time.
+Within that, two cost centers stand out.
+First, `VocabularyOnDisk::operator[]` accounts for 13.77% of total CPU time,
+representing the cost of resolving `ValueId`s to strings via disk reads.
+Second, `formatTriple` accounts for 18.09% of total CPU time.
+The functions that dominate `formatTriple`s call stack are all string manipulation operations
+(`RdfEscaping::escapeForTsv`, `absl::strings_internal::CatPieces`, and `__memmove_avx_unaligned`).
+This suggests that the serialization step is allocating and copying intermediate strings unnecessarily:
+each term is likely escaped into a freshly allocated string,
+and the three terms concatenated into yet another string,
+rather than being written directly and incrementally into the output buffer.
+Eliminating these allocations is a promising optimization direction.
 
-**Cache eviction verification.** The vmtouch logs confirm that the page cache eviction worked correctly.
-Before eviction, approximately 238 MB of the index directory's 32 GB was resident in the page cache (0.72%).
-After eviction, this dropped to 192 KB (0.0006%). Any vocabulary lookups that miss the LRU cache in the cold run
-therefore genuinely go to disk.
-(TODO: maybe we should be more precise about what we are dropping from the os page cache, but that would probably need
-us to specify concretely what each file stands for...)
+**Why CONSTRUCT outperformed SELECT at 10M rows.**
+To understand the reversal, we first analyze the structure of the result set. 
+Running a subquery to count distinct values within the first 10 million rows of the SPO-query reveals 
+10 million distinct subjects, 3 distinct predicates, and 3 distinct objects (see https://qlever.dev/dblp/3Cf1gK).
+The result is ordered by the SPO permutation: 
+for each of the 9 predicate-object combinations, 
+the engine iterates through all subjects that have that combination of predicate and object 
+(see https://qlever.dev/dblp/jZ2b1X).
 
-**Construct warm-cache profile.** The flamegraph for the construct warm run shows FormattedTripleAdapter::get (the
-top-level entry point of the export pipeline) accounting for 81% of total CPU time.
+The formula for the LRU `ValueId`-Cache size is 
+`# of distinct variables in the construct template` x `2048`
+entries for the binary that was used to create the measurement. 
+Thus, for the profiled query, its size is `6,144`. 
 
+The three distinct predicates and three distinct objects together occupy only six of those 6,144 slots 
+and likely remain hits  for the entire query after the first batch. 
+The remaining 6,138 slots are available for subject lookups, 
+but with 10 million distinct subjects this likely provides a 0% 
+hit rate for the subject column (all subject terms are different).
 
-TODO: make a note here that we the accompanying log files are contained in ...
+Despite the subject column seeing no cache hits, we warm/cold wall-clock difference remains only 284 ms.
+Our hypothesis is that the SPO permutation 
+(TODO: define , somewhere earlier, what an SPO permutation is and how qlever makes use of it) 
+already returns the `ValueId` of the subjects in sorted order, 
+making disk reads sequential and therefore fast (TODO: state maybe here, maybe earlier that the `ValueId`s are defined 
+in  such a way that the terms are contiguous in memory),
+(TODO: use a citation to state how, on modern ssds, sequential reads are faster, maybe also quantify it).
+If this case the sort-before lookup optimization actually adds unnecessary overhead for this query. 
 
-TODO:Outlook how we can further improve the performance of exporting results: batched reads from disk.
+## Future Work.
+1. **Real-world CONSTRUCT query evaluation.**
+The profiling results are specific to the SPO query, 
+which has an unusual result set structure (10M distinct subjects, 3 distinct predicates, 3 distinct objects).
+It is unclear how the LRU cache and sort-before-lookup optimization perform under more realistic CONSTRUCT queries.
+An open question is also what "real-world CONSTRUCT queries" look like.
 
-TODO: show profile that shows that the largest part of time is needed for the Vocabulary lookup and say that we should
-try to improve there next.
+2. **`ValueId`-Cache parametrization.**
+The current cache size formula (`# unique variables x 2048`)
+was chosen more or less  arbitrarily without proper analysis.
+A structured investigation of cache parametrization would need to address several open questions.
+First, what are the possible ways to parameterize the cache? 
+2.1) What alternative cache parametrization strategies are possible?
+2.2) Along which dimensions can the cache be optimized (example dimensions could be hit rate, memory footprint, query
+latency, ...)?
+2.3) Which of the dimensions from 2.2 matters most in practice?
+2.4) Given the most important dimension, how should the cache be parametrized to optimize for it?
+miss rates, eviction counts, and memory footprint per query? Possibly also others?)
+2.5) How do we measure the chosen optimization target (requiring first instrumenting the cache to track hit rates, 
+2.6) How do we approach all of the above in a structured an methodical way? 
+For example by running a representative set  of CONSTRUCT queries accross a range of cache sizes and datasets, 
+and relating the measurements back to the optimization objective.
 
-TODO: Possible future improvement: how large of space does the Idcache take up? Measure rss resident set size. How
-effective is it? How effective is it accross different queries? Measure on a bigger index, wikidata for example.
+3. **Investigate blocking I/O and implement batched disk reads.**
+The warm/cold wall-clock difference of only 284 ms suggests the LRU cache is effective for the SPO query, 
+but this may not hold for queries that access a larger number of distinct `ValueIds` 
+or on large indices like Wikidata (206 GB vocabulary vs TODO vocabulary size for dblp).
+A structured investigation would involve:
+3.1) Establish how to measure blocking I/O time.
+3.2) Define what "representative" queries and datasets mean in this context.
+3.3) Across those representative queries and datasets, quantify the blocking I/O overhead.
+3.4) If blocking I/O is significant, investigate strategies to mitigate it.
+For example replacing individual `pread` calls (system calls that read from disk) for batch misses with batched 
+sequential reads, or prefetching vocabulary entries. Understanding how similar systems approach this is a prerequisite.
+3.5) Implement the most promising mitigation strategy.
+3.6) Measure the impact of the implementation accross the same representative queries and datasets, comparing blocking
+I/O time, wall-clock time, and cache miss rates before and after.
 
-TODO: what strikes me as peculiar is that the select-cold query takes 45,577 ms and construct cold takes 6,063 ms at 10M
-rows. We should probably add the 10M rows benchmark also to the evaluation section, since this is a very large
-difference. (solved: qlever-json format vs turtle)
+4. **Eliminate unnecessary work in the export pipeline.**
+As identified in the profiling section, `formatTriple` accounts for 18% of CPU time, with the call stack suggesting 
+unnecessary intermediate string allocations during escaping and concatenation. 
+4.1) In this specific instance, write escaped terms directly into a pre-allocated output buffer.
+4.2) More broadly, the export pipeline should be reviewed for other instances of avoidable work introduced by suboptimal
+implementation choices (unnecessary copying, redundant computation, inefficient data structures).
 
+5. **Correctness and testing of the CONSTRUCT export pipeline**.
+5.1) Establish what correct behavior means for the CONSTRUCT export pipeline specifically according to the 
+SPARQL 1.1 and RDF standards. Formulate a set of requirements that capture this "correct" behavior .
+5.2) Develop a comprehensive test suite that verifies the pipeline's output against these requirements across a range 
+of query templates, edge cases, and output formats.
+5.3) Use this test suite as a safety net for future optimizations, 
+ensuring performance improvements do not introduce correctness regressions.
 
 # References
 [^1]: W3 Org. "RDF Primer" https://www.w3.org/TR/rdf11-primer/ Accessed 2026-03-16.
