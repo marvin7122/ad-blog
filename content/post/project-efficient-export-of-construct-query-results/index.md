@@ -8,7 +8,12 @@ categories: []
 image: "img/writing.jpg"
 ---
 
-Summary goes here
+The SPARQL CONSTRUCT query form allows clients to extract and transform RDF data into a new graph. 
+In QLever, 
+the original CONSTRUCT export pipeline was up to 2x slower than an equivalent SELECT export on the same data.
+This post describes the analysis of the original implementation, 
+the design and implementation of an improved pipeline, and an empirical evaluation of the speedup achieved, 
+and a profiling-based analysis of the remaining overhead that motivates concrete directions for future work.
 
 <!--more-->
 # Table of Contents
@@ -497,6 +502,7 @@ and see how much of it the new implementation eliminates.
 | Turtle     | 100k  | 358      | 137      | 2.61x   |
 | Turtle     | 1M    | 3389     | 1184     | 2.86x   |
 TODO: add export times etc for 10M rows
+TODO: create script for these measurements and put it into the artefacts sub folder.
 
 **Observation.** The new implementation is consistently faster than the original across all formats and row counts.
 The speedup grows with the number of result rows — from roughly 1.6–1.9x at 10k rows to 2.4–2.9x at 1M rows —
@@ -758,58 +764,57 @@ vocabulary file, but a precise explanation would require a more detailed analysi
 the actual disk access pattern, which we leave as future work.
 
 ## Future Work.
-1. **Real-world CONSTRUCT query evaluation.**
+1. **Real-world CONSTRUCT query evaluation.** \
 The profiling results are specific to the SPO query, 
 which has an unusual result set structure (10M distinct subjects, 3 distinct predicates, 3 distinct objects).
 It is unclear how the LRU cache and sort-before-lookup optimization perform under more realistic CONSTRUCT queries.
 An open question is also what "real-world CONSTRUCT queries" look like.
 
-2. **`ValueId`-Cache parametrization.**
+2. **`ValueId`-Cache parametrization.** \
 The current cache size formula (`# unique variables x 2048`)
-was chosen more or less  arbitrarily without proper analysis.
-A structured investigation of cache parametrization would need to address several open questions.
-First, what are the possible ways to parameterize the cache? 
-2.1) What alternative cache parametrization strategies are possible?
+was chosen more or less  arbitrarily without proper analysis. \
+A structured investigation of cache parametrization would need to address several open questions. \
+2.1) What alternative cache parametrization strategies are possible? \
 2.2) Along which dimensions can the cache be optimized (example dimensions could be hit rate, memory footprint, query
-latency, ...)?
-2.3) Which of the dimensions from 2.2 matters most in practice?
+latency, ...)? \
+2.3) Which of the dimensions from 2.2 matters most in practice? \
 2.4) Given the most important dimension, how should the cache be parametrized to optimize for it?
-miss rates, eviction counts, and memory footprint per query? Possibly also others?)
-2.5) How do we measure the chosen optimization target (requiring first instrumenting the cache to track hit rates, 
+miss rates, eviction counts, and memory footprint per query? Possibly also others?) \
+2.5) How do we measure the chosen optimization target? \
 2.6) How do we approach all of the above in a structured an methodical way? 
 For example by running a representative set  of CONSTRUCT queries accross a range of cache sizes and datasets, 
 and relating the measurements back to the optimization objective.
 
-3. **Investigate blocking I/O and implement batched disk reads.**
+3. **Investigate blocking I/O and implement batched disk reads.** \
 The warm/cold wall-clock difference of only 284 ms suggests the LRU cache is effective for the SPO query, 
 but this may not hold for queries that access a larger number of distinct `ValueIds` 
-or on large indices like Wikidata (206 GB vocabulary vs TODO vocabulary size for dblp).
-A structured investigation would involve:
-3.1) Understand the vocabulary file layout and access patterns. Understand how `ValueId`s map to positions in the vocabulary file.
-3.2) Establish how to measure blocking I/O time.
-3.3) Define what "representative" queries and datasets mean in this context.
-3.4) Across those representative queries and datasets, quantify the blocking I/O overhead.
-3.5) If blocking I/O is significant, investigate strategies to mitigate it.
+or on large indices like Wikidata (206 GB vocabulary vs TODO vocabulary size for dblp). \
+A structured investigation would involve: \
+3.1) Understand the vocabulary file layout and access patterns. Understand how `ValueId`s map to positions in the vocabulary file. \
+3.2) Establish how to measure blocking I/O time. \
+3.3) Define what "representative" queries and datasets mean in this context. \
+3.4) Across those representative queries and datasets, quantify the blocking I/O overhead. \
+3.5) If blocking I/O is significant, investigate strategies to mitigate it. \
 For example replacing individual `pread` calls (system calls that read from disk) for batch misses with batched 
-sequential reads, or prefetching vocabulary entries. Understanding how similar systems approach this is a prerequisite.
-3.6) Implement the most promising mitigation strategy.
+sequential reads, or prefetching vocabulary entries. Understanding how similar systems approach this is a prerequisite. \
+3.6) Implement the most promising mitigation strategy. \
 3.7) Measure the impact of the implementation accross the same representative queries and datasets, comparing blocking
 I/O time, wall-clock time, and cache miss rates before and after.
 
-4. **Eliminate unnecessary work in the export pipeline.**
+4. **Eliminate unnecessary work in the export pipeline.** \
 As identified in the profiling section, `formatTriple` accounts for 18% of CPU time, with the call stack suggesting 
-unnecessary intermediate string allocations during escaping and concatenation. 
-4.1) In this specific instance, write escaped terms directly into a pre-allocated output buffer.
+unnecessary intermediate string allocations during escaping and concatenation. \
+4.1) In this specific instance, write escaped terms directly into a pre-allocated output buffer. \
 4.2) More broadly, the export pipeline should be reviewed for other instances of avoidable work introduced by suboptimal
 implementation choices (unnecessary copying, redundant computation, inefficient data structures).
 
-5. **Correctness and testing of the CONSTRUCT export pipeline**.
+5. **Correctness and testing of the CONSTRUCT export pipeline**. \
 5.1) Establish what correct behavior means for the CONSTRUCT export pipeline specifically according to the 
-SPARQL 1.1 and RDF standards. Formulate a set of requirements that capture this "correct" behavior .
+SPARQL 1.1 and RDF standards. Formulate a set of requirements that capture this "correct" behavior. \
 5.2) Develop a comprehensive test suite that verifies the pipeline's output against these requirements across a range 
-of query templates, edge cases, and output formats.
+of query templates, edge cases, and output formats. \
 5.3) Use this test suite as a safety net for future optimizations, 
-ensuring performance improvements do not introduce correctness regressions.
+ensuring performance improvements do not introduce correctness regressions. \
 
 # References
 [^1]: W3 Org. "RDF Primer" https://www.w3.org/TR/rdf11-primer/ Accessed 2026-03-16.
