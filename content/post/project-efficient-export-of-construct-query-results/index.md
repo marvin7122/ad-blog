@@ -23,8 +23,7 @@ Summary goes here
 - [Implementation](#implementation)
 - [Evaluation](#evaluation)
 
-TODO: maybe explain somwhere, how the SELECT export works, currently.
-- [Discussoin](#discussion)
+- [Discussion](#discussion)
 
 # Introduction
 ## RDF
@@ -673,12 +672,42 @@ Eliminating these allocations is a promising optimization direction.
 
 **Why CONSTRUCT outperformed SELECT at 10M rows.**
 To understand the reversal, we first analyze the structure of the result set. 
-Running a subquery to count distinct values within the first 10 million rows of the SPO-query reveals 
-10 million distinct subjects, 3 distinct predicates, and 3 distinct objects (see https://qlever.dev/dblp/3Cf1gK).
-The result is ordered by the SPO permutation: 
-for each of the 9 predicate-object combinations, 
-the engine iterates through all subjects that have that combination of predicate and object 
-(see https://qlever.dev/dblp/jZ2b1X).
+To understand the structure of the result set, we run two queries against the DBLP index.
+The first counts the number of distinct subjects, predicates, and objects within the first 10 million rows of 
+Running a subquery to count distinct values within the first 10 million rows of the SPO-query.
+
+```sparql
+SELECT (COUNT(DISTINCT ?s) AS ?ds) (COUNT(DISTINCT ?p) AS ?dp) (COUNT(DISTINCT ?o) AS ?do) WHERE {
+  SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10000000
+}
+```
+
+result table:
+| ?ds        | ?dp | ?do |
+|------------|-----|-----|
+|10,000,000  |3    | 3   |
+
+
+This reveals 10 million distinct subjects, 3 distinct predicates, and 3 distinct objects.
+
+The second query shows how the 10 million rows are distributed across the 9 possible (predicate, object) combinations.
+
+```sparql
+SELECT ?p ?o (COUNT(?s) AS ?count) WHERE {
+  SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10000000
+} GROUP BY ?p ?o ORDER BY ?p ?o
+```
+
+result table:
+| ?p              | ?o  | ?count    |
+|-----------------|-----|-----------|
+|numberOfCreators |0    | 64,366    |
+|numberOfCreators |1    | 1,152,843 |
+|numberOfCreators |2    | 441,263   |
+|signatureOrdinal |1    | 8,338,784 |
+|versionOrdinal   |0    | 920       |
+|versionOrdinal   |1    | 1,824     |
+
 
 The formula for the LRU `ValueId`-Cache size is 
 `# of distinct variables in the construct template` x `2048`
@@ -692,13 +721,41 @@ but with 10 million distinct subjects this likely provides a 0%
 hit rate for the subject column (all subject terms are different).
 
 Despite the subject column seeing no cache hits, we warm/cold wall-clock difference remains only 284 ms.
-Our hypothesis is that the SPO permutation 
-(TODO: define , somewhere earlier, what an SPO permutation is and how qlever makes use of it) 
-already returns the `ValueId` of the subjects in sorted order, 
-making disk reads sequential and therefore fast (TODO: state maybe here, maybe earlier that the `ValueId`s are defined 
-in  such a way that the terms are contiguous in memory),
-(TODO: use a citation to state how, on modern ssds, sequential reads are faster, maybe also quantify it).
-If this case the sort-before lookup optimization actually adds unnecessary overhead for this query. 
+To understand why, we inspect which index permutation QLever chose for this query 
+(TODO: define earlier what an index permutation is).
+QLever's `application/qlever-results+json` format includes a `runtimeInformation` field containing the query execution
+plan. (TODO: define somewhere earlier what a query execution plan is).
+We retrieve it with the following command against the server started as
+`./qlever-server -i dblp -p 7001 --default-query-timeout 3600s`:
+
+```
+curl -X POST "http://localhost:7001/query" \
+-H "Content-Type: application/sparql-query" \
+-H "Accept: application/qlever-results+json" \
+--data-binary "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10000000" \
+> /tmp/temp.txt
+```
+
+The relevant part of the response is:
+```
+"query_execution_tree": {
+  "description": "LIMIT 10000000",
+  "children": [
+    {
+      "description": "IndexScan OPS ?s ?p ?o",
+      "column_names": ["?o", "?p", "?s"],
+      "result_rows": 10000000
+    }
+  ]
+}
+```
+
+The description field confirms that the query planner (TODO: explain what a query planner is) chose the OPS permutation
+(TODO: explain what an OPS permutation is) (IndexScan OPS ?s ?p ?o) (TODO: explain what an index scan is).
+Within each (object, predicate) block, subject `ValueIds` therefore arrive in ascending order.
+This may contribute to the small warm/cold difference (for example by enabling more sequential access patterns in the
+vocabulary file, but a precise explanation would require a more detailed analysis of the vocabulary file layout and 
+the actual disk access pattern, which we leave as future work.
 
 ## Future Work.
 1. **Real-world CONSTRUCT query evaluation.**
@@ -728,14 +785,15 @@ The warm/cold wall-clock difference of only 284 ms suggests the LRU cache is eff
 but this may not hold for queries that access a larger number of distinct `ValueIds` 
 or on large indices like Wikidata (206 GB vocabulary vs TODO vocabulary size for dblp).
 A structured investigation would involve:
-3.1) Establish how to measure blocking I/O time.
-3.2) Define what "representative" queries and datasets mean in this context.
-3.3) Across those representative queries and datasets, quantify the blocking I/O overhead.
-3.4) If blocking I/O is significant, investigate strategies to mitigate it.
+3.1) Understand the vocabulary file layout and access patterns. Understand how `ValueId`s map to positions in the vocabulary file.
+3.2) Establish how to measure blocking I/O time.
+3.3) Define what "representative" queries and datasets mean in this context.
+3.4) Across those representative queries and datasets, quantify the blocking I/O overhead.
+3.5) If blocking I/O is significant, investigate strategies to mitigate it.
 For example replacing individual `pread` calls (system calls that read from disk) for batch misses with batched 
 sequential reads, or prefetching vocabulary entries. Understanding how similar systems approach this is a prerequisite.
-3.5) Implement the most promising mitigation strategy.
-3.6) Measure the impact of the implementation accross the same representative queries and datasets, comparing blocking
+3.6) Implement the most promising mitigation strategy.
+3.7) Measure the impact of the implementation accross the same representative queries and datasets, comparing blocking
 I/O time, wall-clock time, and cache miss rates before and after.
 
 4. **Eliminate unnecessary work in the export pipeline.**
