@@ -14,7 +14,6 @@ the original CONSTRUCT export pipeline was up to 2x slower than an equivalent SE
 This post describes the analysis of the original implementation, 
 the design and implementation of an improved pipeline, and an empirical evaluation of the speedup achieved, 
 and a profiling-based analysis of the remaining overhead that motivates concrete directions for future work.
-TODO: also add the speedup that we achieved here as result.
 
 <!--more-->
 # Table of Contents
@@ -250,6 +249,13 @@ improve it.
 
 # Original Implementation 
 ## 1. Where it fits in
+
+### index building 
+TODO:
+how an index is built, here we can also explain what the index is, what the vocabulary is etc.
+
+### query resolution
+
 Figure X (TODO) shows how a CONSTRUCT query is processed end-to-end in QLever.
 
 When a client sends an HTTP request containing a SPARQL CONSTRUCT query, the QLever engine processes it in three steps
@@ -257,7 +263,7 @@ before the export begins.
 
 1) First, the query string is parsed into a `ParsedQuery`, which is a structured internal representation of the query
 (TODO: explain what "structured internal representation" means.) 
-2) Second, a `QueryPlanner` derives a `QueryExecutionTree` fro the `ParsedQuery`, which is the physical execution plan
+2) Second, a `QueryPlanner` derives a `QueryExecutionTree` from the `ParsedQuery`, which is the physical execution plan
 for the query.
 3) Third, the `QueryExecutionTree` is executed against the index (TODO: explain what an index is first), producing the
  result of the where clause as a `Result` object. The `Result` contains an `IdTable`: a table of rows where each row
@@ -273,88 +279,99 @@ client in the appropriate serialization format.
 
 ## 2. How the original implementation worked
 
-The core of the CONSTRUCT export is a single function: `constructQueryResultToTriples`. Its structure is a
-straightforward nested loop: for each row in the result table (the table which is the result from computing the WHERE clause of
-the CONSTRUCT query) iterate over the triple patterns in the CONSTRUCT template and evaluate each triple.
-Evaluating a triple means resolving each of its three positions (subject, predicate, object) to a concrete string.
+The core of the CONSTRUCT export is a single function: `constructQueryResultToTriples`. \
+Its structure is a straightforward nested loop: \
+for each row in the result table 
+(the table which is the result from computing the WHERE clause of the CONSTRUCT query) 
+iterate over the triple patterns in the CONSTRUCT template and evaluate each triple. \
+Evaluating a triple means resolving each of its three positions (subject, predicate, object) to a concrete string. \
 If all three resolve successfully, the triple is emitted.
 
-To make this concrete, suppose the query is:
-
+Let's make this concrete via an example, suppose the query is:
 ```sparql
 CONSTRUCT { ?person <has-interest> ?thing }
 WHERE     { ?person <is interested in> ?thing }
 ```
 
-Let us walk through the execution of this CONSTRUCT query on the example knowledge base (TODO: back reference to the KB
-from above). The QLever engine executes the WHERE clause and produces the following `IdTable` as result:
+Let us walk through the execution of this CONSTRUCT query on the example knowledge base from earlier (Listing 1). \
+The QLever engine executes the WHERE clause and produces the following `IdTable` as result:
 
 | row | `?person` (col 0) | `?thing` (col 1) |
 |-----|-------------------|------------------|
 | 0   | `VocabId(42)`     | `VocabId(17)`    |
 | 1   | `VocabId(99)`     | `VocabId(17)`    |
 
-Each cell of the table holds a `ValueId`. For IRIs and literals stored in the main vocabulary, this is a `VocabIndex`, 
-an integer that serves as a pointer into the on-disk vocabulary.
+Each cell of the table holds a `ValueId`. \
+For IRIs and literals stored in the main vocabulary, this is a `VocabIndex`, 
+(which is an integer that serves as a pointer into the on-disk vocabulary).
 
-The CONSTRUCT template `{ ?person <has-interest> ?thing }` is represented internally as a list of `GraphTerm` triples.
-Each position in a triple is one of: a `Variable`, an `Iri`, a `Literal`, or a `BlankNode`. How a `GraphTerm` is
-evaluated depends on its type:
+The CONSTRUCT template `{ ?person <has-interest> ?thing }` is represented internally as a list of `GraphTerm` triples. \
+Each position in a triple is one of: \
+a `Variable`, an `Iri`, a `Literal`, or a `BlankNode`.
 
-- **`Iri` or `Literal`**: the string representation is stored directly in the object and is returned immediately,
+How a `GraphTerm` is evaluated depends on its type:
+- `Iri` or `Literal`: the string representation is stored directly in the object and is returned immediately,
 without any vocabulary lookup.
-- **`Variable`**: the variable's column index is looked up in the `IdTable`, the `ValueId` for the current row is
+- `Variable`: the variable's column index is looked up in the `IdTable`, the `ValueId` for the current row is
   read, and then resolved to a string via a vocabulary lookup.
-- **`BlankNode`**: the identifier is constructed from the blank node's label and the current row number, producing a 
+- `BlankNode`: the identifier is constructed from the blank node's label and the current row number, producing a 
 unique string such as `_:g42_b0`. No vocabulary lookup is needed (TODO: explain somwhere earlier what a BlankNode is).
 
-**Processing row 0:**
-The template triple `?person <has-interest> ?thing` is evaluated term by term. The subject `?person` is a `Variable`,
+**Processing row 0:** \
+The template triple `?person <has-interest> ?thing` is evaluated term by term. \
+The subject `?person` is a `Variable`,
 so the implementation reads column 0 of the current result table row, obtaining `VocabId(42)`, and resolves it via a
-vocabulary lookup to `"<Bob>"`. The predicate `<has-interest>` is an `Iri`, so its string is returned directly from the object —
-`"<has-interest>"` — without any lookup. The object `?thing` is again a `Variable`; column 1 yields `VocabId(17)`,
+vocabulary lookup to `"<Bob>"`. \
+The predicate `<has-interest>` is an `Iri`, so its string is returned directly from the object without any vocabulary lookup. \
+The object `?thing` is again a `Variable`; column 1 yields `VocabId(17)`,
 which resolves to `"<the Mona Lisa>"`.
 
-The function emits a `StringTriple("<Bob>", "<has-interest>", "<the Mona Lisa>")`.
+The function emits a \
+`StringTriple("<Bob>", "<has-interest>", "<the Mona Lisa>")`.
 
-**Processing row 1:**
-The same template triple is evaluated again from scratch. The subject `?person` resolves via column 0 to `VocabId(99)`,
-which a vocabulary lookup turns into `"<Alice>"`. The predicate `<has-interest>` is returned directly as before. The
-object `?thing` again yields `VocabId(17)` from column 1 — the same `ValueId` as in row 0 — which is looked up
-independently, again producing `"<the Mona Lisa>"`.
+**Processing row 1:** \
+The same template triple is evaluated again from scratch. \
+The subject `?person` resolves via column 0 to `VocabId(99)`, which a vocabulary lookup turns into `"<Alice>"`. \
+The predicate `<has-interest>` is returned directly from the `Iri` object as before. \
+The object `?thing` again yields `VocabId(17)` from column 1, the same `ValueId` as in row 0,
+which is looked up independently, again producing `"<the Mona Lisa>"`.
 
-The function emits a `StringTriple("<Alice>", "<has-interest>", "<the Mona Lisa>")`.
+The function emits a \
+`StringTriple("<Alice>", "<has-interest>", "<the Mona Lisa>")`.
 
-**Serialization.** Once `constructQueryResultToTriples` has yielded a `StringTriple`, a format-specific serializer
-produces a stream of string objects according to the output serialization format specified for the query.
-The output format is determined once per request from the HTTP `Accept` header.
-For Turtle, the triple is written as `subject predicate object .`.
+**Serialization.** \
+Once `constructQueryResultToTriples` has yielded a `StringTriple`, a format-specific serializer
+produces a stream of string objects according to the output serialization format specified for the query. \
+The output format is determined once per request from the HTTP `Accept` header. \
+For Turtle, the triple is written as `subject predicate object .`.\
 For TSV and CSV, the three strings are escaped and joined with a tab or comma separator.
-For QLever JSON, the triple is encoded as a JSON object. The serialized output is streamed directly to the
-HTTP response.
+For QLever JSON, the triple is encoded as a JSON object. \
+The serialized output is streamed directly to the HTTP response.
 
 # Analysis of Improvement potential for the original Implementation 
 The walkthrough above reveals three structural inefficiencies in the original implementation.
 
-**1. Constants are re-evaluated on every row.**
+**1. Constants are re-evaluated on every row.** \
 Every triple pattern in the CONSTRUCT template is evaluated from scratch for every result row, including constant
 positions, i.e. `Iri` and `Literal` terms whose string representation never changes accross rows. Although evaluating
 a constant is cheap (it just reads a field already in memory), it is unnecessary work that scales linearly with the
 number of result rows. A one-time preprocessing step before the row loop begins could resolve constants once and reuse
 the result for all rows.
 
-**2. The same `ValueId` is often resolved multiple times.**
-Result tables frequently contain the same `ValueId` in many rows. A commmon predicate Iri for example appears in the
-same column for every row. In the original implementation, each occurrence triggers an independendant vocabulary lookup.
-The walkthrough made this visible: `VocabId(17)` appeared in both row 0 and row 1, but was looked up twice. A cache that
-maps recently seen `ValueId`s to their resolved strings would eliminate redundant lookups for repeated values.
+**2. The same `ValueId` is often resolved multiple times.** \
+Result tables frequently contain the same `ValueId` in many rows.
+In the original implementation, each occurrence triggers an independent vocabulary lookup.
+The walkthrough made this visible: `VocabId(17)` appeared in both row 0 and row 1, but was looked up twice.\
+A cache that maps recently seen `ValueId`s to their resolved strings would eliminate redundant lookups for repeated values.
 
-**3. Vocabulary lookups are issued one at a time**
+**3. Vocabulary lookups are issued one at a time** \
 Resolving a `VocabIndex` requires reading from the on-disk vocabulary, which involves decompression and string
-construction. The original implementation issues these lookups individually: one lookup per variable position per row.
+construction (depending on how the vocabulary is actually stored on disk, we do not always need decompression here). \
+The original implementation issues these lookups individually: \
+one lookup per variable position per row. \
 Processing rows in batches would allow the implementation to detect duplicate `ValueId`s within one batch before
-issuing any lookups at all. This way we could also exploit more sequential memory access patterns in the vocuabulary.
-This amortizes the per-lookup cost accross many rows at once.
+issuing any lookups at all. \
+This way we could also exploit more sequential memory access patterns in the vocuabulary.
 
 # Improved Implementation (Contribution)
 The CONSTRUCT query export pipeline is implemented as four sequential phases, each with a single responsibility. The
@@ -365,7 +382,7 @@ diagram below gives an overview. The sections that follow describe each phase in
 ### Phase 1 — Template preprocessing (ConstructTemplatePreprocessor)
 **Motivation.** In the original implementation, every term in every template triple (including constants) was evaluated
 from scratch for every row of the WHERE-clause result table (`IdTable`). A constant like the `Iri` `<has interest>`
-always resolves to the same string, independendant of the particular result table row. Converting an `Iri` to its string
+always resolves to the same string, independent of the particular result table row. Converting an `Iri` to its string
 representation constructs a new string object every time.
 
 `ConstructTemplatePreprocessor::preprocess` transforms the raw `GraphTerm` triples from the CONSTRUCT clause into a
