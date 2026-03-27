@@ -14,6 +14,7 @@ the original CONSTRUCT export pipeline was up to 2x slower than an equivalent SE
 This post describes the analysis of the original implementation, 
 the design and implementation of an improved pipeline, and an empirical evaluation of the speedup achieved, 
 and a profiling-based analysis of the remaining overhead that motivates concrete directions for future work.
+TODO: also add the speedup that we achieved here as result.
 
 <!--more-->
 # Table of Contents
@@ -38,10 +39,12 @@ RDF allows us to make statements about resources. The format of these statements
 A statement always has the following structure:\
 `<subject> <predicate> <object>`
 
-An RDF statement expresses a relationship between two resources. The subject and the object represent the two resources
-being related; the predicate represents the nature of their relationship. The relationship is phrased in a directional
-way (from subject to object). RDF statements are also called triple statements, since one statement consists of three
-parts: subject, predicate, and object.
+An RDF statement expresses a relationship between two resources. 
+The subject and the object represent the two resources being related; 
+the predicate represents the nature of their relationship. 
+The relationship is phrased in a directional way (from subject to object). 
+RDF statements are also called triple statements, since one statement consists of three parts: 
+subject, predicate, and object.
 
 Below is an example of multiple RDF triples, which are seperated by a dot (.) and a newline.
 ```ntriples
@@ -53,27 +56,28 @@ Below is an example of multiple RDF triples, which are seperated by a dot (.) an
 <the video 'La Joconde à Washington'> <is about> <the Mona Lisa>
 <Alice> <is interested in> <the Mona Lisa>.
 <Alice> <is interested in> <the video 'La Joconde à Washington'>.
-
 ```
-TODO: add name for this, sample data 1 or sth.
+*Listing 1*
 
-RDF statements represent a graph in the following way: Each RDF triple statement is represented by: (1) a node
-for the subject, (2) a directed edge from subject to object, representing a predicate, and (3) a node for the object.
-
-TODO: visualize the dataset from above
-Fig. 1 shows a visualization of the graph resulting from the triples above.
+RDF statements represent a graph in the following way: 
+Each RDF triple statement is represented by: 
+(1) a node for the subject, 
+(2) a directed edge from subject to object, representing a predicate, and 
+(3) a node for the object.
 
 ## SPARQL 
 SPARQL is an RDF query language, that is, a query language for retrieving and manipulating data stored in RDF format.
 
-Most forms of SPARQL query contain a set of triple patterns called a _basic graph pattern_. Triple patterns are like
-RDF triples except that each of the subject, predicate and object may be a variable (a variable is a string that starts
-with a `?`). A basic graph patterm _matches_ a subgraph of the RDF data when RDF terms from that subgraph may be
-substituted for the variables and the result is RDF graph equivalent to the subgraph. [^3]
+Most forms of SPARQL query contain a set of triple patterns called a *basic graph pattern*. 
+Triple patterns are like RDF triples except that each of the subject, predicate and object may be a variable 
+(a variable is a string that starts with a `?`). 
+A basic graph patterm *matches* a subgraph of the RDF data, 
+when RDF terms from that subgraph may be substituted for the variables and the result is RDF graph equivalent to the subgraph. [^3]
 
-The most common query form for SPARQL queries is `SELECT`: It returnes the results of the query as a table of variable
-bindings. After the `SELECT` keyword, one specifies which variable bindings should appear in the result table for the
-query.
+The most common query form for SPARQL queries is `SELECT`: 
+It returnes the results of the query as a table of variable bindings. 
+After the `SELECT` keyword, 
+one specifies which variable bindings should appear in the result table for the query.
 
 See the following example SPARQL SELECT query which queries for the following:
 find everyone (`?person`) who is interested in something (`?thing`) and who created that thing (`?creator`).
@@ -92,9 +96,6 @@ Against our example data (sample data 1), this query returns:
 | Bob | the Mona Lisa | Leonardo da Vinci |
 | Alice | the Mona Lisa | Leonardo da Vinci |
 
-
-TODO: maybe say first what an engine is in this context.
-
 The engine computing the result of the SPARQL query against our knowledge base from above finds all substitutions for
 the variables that make every triple pattern of the WHERE clause hold simultaneously.
 
@@ -103,14 +104,15 @@ the video; only combinations, where *all* triple patterns of the WHERE clause ma
 
 ## CONSTRUCT queries 
 A CONSTRUCT query is a SPARQL query form that produces a new RDF graph rather than a table of variable bindings.
-The CONSTRUCT clause specifies a *graph template*, which is a set of triple patterns that may contain variables and
-constants (TODO: at this point, the reader does not know what a constant is). For each result row (called a query 
-solution in the SPARQL standard) produced by the WHERE clause, the engine substitutes the bound variable values into
-the graph template and adds the resulting triples to the output graph.
+The CONSTRUCT clause specifies a *graph template*, 
+which is a set of triple patterns that may contain variables and constants 
+(TODO: at this point, the reader does not know what a constant is). 
+For each result row (called a query  solution in the SPARQL standard) produced by the WHERE clause, 
+the engine substitutes the bound variable values into the graph template and adds the resulting triples to the output graph.
 The final output of the CONSTRUCT query is the union of all such triples across all result rows.
 
-If any instantiation produces a triple containing an unbound variable: that is, a variable for which the current result
-row provides no value — that triple is omitted from the output.
+If any instantiation produces a triple containing an unbound variable: 
+that is, a variable for which the current result row provides no value, that triple is omitted from the output.
 
 Triples in the template that contain no variables at all (called ground triples) appear in the output graph unchanged,
 regardless of the result rows.
@@ -118,12 +120,14 @@ regardless of the result rows.
 --
 Consider the following CONSTRUCT query applied to our example data:
 
+```sparql
 CONSTRUCT {
 ?person <has-interest> ?thing .
 }
 WHERE {
 ?person <is interested in> ?thing .
 }
+```
 
 This produces the following RDF graph:
 
@@ -483,104 +487,60 @@ cmake -B build \
 -DCMAKE_LINKER=/usr/bin/lld
 ```
 
-### Experiment 1: Baseline SPO query
+## Evaluation
+
 First, let us use the same `CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }` query from the Problem Statement so we can
-compare the old and new implementation directly. This allows us to connect back to the original overhead reported there
-and see how much of it the new implementation eliminates.
+compare the old and new implementation of the construct export directly. 
 
 | Format     | Limit | Old (ms) | New (ms) | Speedup |
 |------------|-------|----------|----------|---------|
 | TSV        | 10k   | 47       | 30       | 1.57x   |
-| TSV        | 100k  | 364      | 144      | 2.53x   |
-| TSV        | 1M    | 3481     | 1274     | 2.73x   |
+| TSV        | 10M   | TODO     | TODO     | TODO    |
 | CSV        | 10k   | 47       | 26       | 1.81x   |
-| CSV        | 100k  | 367      | 144      | 2.55x   |
-| CSV        | 1M    | 3488     | 1259     | 2.77x   |
-| qleverJson | 10k   | 54       | 30       | 1.80x   |
-| qleverJson | 100k  | 422      | 190      | 2.22x   |
-| qleverJson | 1M    | 4069     | 1731     | 2.35x   |
+| CSV        | 10M   | TODO     | TODO     | 2.77x   |
+| qleverJson | 10k   | 54       | 30       | 1.80x   | 
+| qleverJson | 10M   | TODO     | TODO     | TODO    |
 | Turtle     | 10k   | 47       | 25       | 1.88x   |
-| Turtle     | 100k  | 358      | 137      | 2.61x   |
-| Turtle     | 1M    | 3389     | 1184     | 2.86x   |
-TODO: add export times etc for 10M rows
+| Turtle     | 10M   | TODO     | TODO     | TODO    |
+
 TODO: create script for these measurements and put it into the artefacts sub folder.
 
 **Observation.** The new implementation is consistently faster than the original across all formats and row counts.
-The speedup grows with the number of result rows — from roughly 1.6–1.9x at 10k rows to 2.4–2.9x at 1M rows —
-indicating that the optimizations scale well with result set size. This is expected: the benefits of constant
-preprocessing, column-major batch evaluation, and LRU caching all accumulate as more rows are processed.
-
-### Experiment 2: Constant preprocessing
-
-**Motivation.** In the original implementation, every term in every template triple is evaluated from scratch for every
-result row, including constant positions whose string representation does not change across result table rows.
-Phase 1 of the new implementation eliminates this by resolving constants once at preprocessing time and reusing the
-result for all rows.
-
-To isolate this effect, we use a CONSTRUCT template that contains only constants:
-`CONSTRUCT { <s> <p> <o> } WHERE { ?s ?p ?o }`. Since the template contains no variables, neither implementation
-performs any vocabulary lookups during export. Any difference in runtime between the old and new implementation is
-therefore entirely attributable to how efficiently the two implementations handle constant template terms.
-
-| Format     | Limit | Old (ms) | New (ms) | Speedup |
-|------------|-------|----------|----------|---------|
-| TSV        | 10k   | 17       | 13       | 1.31x   |
-| TSV        | 100k  | 35       | 32       | 1.09x   |
-| TSV        | 1M    | 181      | 181      | 1.00x   |
-| CSV        | 10k   | 13       | 17       | 0.76x   |
-| CSV        | 100k  | 36       | 32       | 1.12x   |
-| CSV        | 1M    | 190      | 193      | 0.98x   |
-| qleverJson | 10k   | 20       | 17       | 1.18x   |
-| qleverJson | 100k  | 67       | 66       | 1.02x   |
-| qleverJson | 1M    | 488      | 487      | 1.00x   |
-| Turtle     | 10k   | 13       | 18       | 0.72x   |
-| Turtle     | 100k  | 30       | 29       | 1.03x   |
-| Turtle     | 1M    | 157      | 160      | 0.98x   |
-TODO: add export times etc for 10M rows
-
-
-**Observation.** The new implementation shows no meaningful speedup over the original for a constants-only template.
-The ratios range from 0.72x to 1.31x with no consitent trend and converge to 1.00x at 1M rows across the three measured
-formats.
-
-This result is expected in retrospect. Each `Iri` or `Literal` in the CONSTRUCT template is part of the parsed query
-object, which already holds its string representation in memory. Evaluating it per row is just reading a field, which
-is a cheap operation. Phase 1 replaces this with a shared-pointer copy, which is comparably cheap. The per-row
-saving is too small to be visible against the cost of query execution and serialization.
-
-TODO: should we also do some more experiments here?
+The speedup grows with the number of result rows (from roughly TODO at 10k rows to TODO at 10M rows) 
+indicating that the optimizations scale well with result set size.
 
 # Discussion and Future Work
 
 ## Profiling the remaining overhead
-The new implementation achieves a 2.7-2.9x speedup over the original for TSV, CSV, and Turtle at one million rows.
+The new implementation achieves a TODO speedup over the original for TSV, CSV, and Turtle at 10 million rows.
 To understand where the remaining time goes and to motivate concrete directions for future work, we profile the
 CONSTRUCT export pipeline and compare it against an equivalent SELECT export.
 
-TODO: the speedup is way larger for the 10M rows export.
-
-
-**Choice of queries.** We profile `CONSTRUCT {?s ?p ?o} WHERE { ?s ?p ?o } LIMIT 10000000` and its SELECT equivalent
-`SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10000000` side by side. Both queries evaluate the same WHERE clause; any
-difference in their profiles is  therefore attributable to the CONSTRUCT export pipeline itself. The SPO query is the
-most informative subject for profiling because every result row contains three variable positions, each of which must be
-resolved via a vocabulary lookup. It maximises the load on the vocabulary access path and represents the worst case for
-the pipeline we want to understand. We use the 10 million limit, in order to be able to gather more data in the
-profiling. Both queries are exported in TSV format. TSV is supported by both query forms and has minimal per-row
-serialization overhead. Using the same format for both queries also ensures that any difference between the two profiles
-is attributable to improvements the CONSTRUCT pipeline itself rather than to format differences.
+**Choice of queries.**
+We profile `CONSTRUCT {?s ?p ?o} WHERE { ?s ?p ?o } LIMIT 10000000` and its SELECT equivalent
+`SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10000000` side by side. 
+Both queries evaluate the same WHERE clause;
+any difference in their profiles is  therefore attributable to the CONSTRUCT export pipeline itself. 
+he SPO query is the most informative subject for profiling because every result row contains three variable positions, 
+each of which must be resolved via a vocabulary lookup. 
+It maximises the load on the vocabulary access path and represents the worst case for the pipeline we want to understand. 
+We use the 10 million limit, in order to be able to gather more data in the profiling. 
+Both queries are exported in TSV format. TSV is supported by both query forms and has minimal per-row serialization overhead. 
+Using the same format for both queries also ensures that any difference between the two profiles is attributable to improvements the CONSTRUCT pipeline itself rather than to format differences.
 
 **Tool.** We use `perf record`, a statistical sampling profiler that interrupts the process at a fixed frequency and
-records the current call stack at each sample. After enough samples, the aggregate reveals which functions account for
-the largest share of CPU time. We visualize the output as a flamegraph: each bar represents a function, its width
-proportional to the fraction of samples in which it appeared on the call stack. Wide bars near the top of the call stack
-are the hotspots (bars not near the top of the call stacks are from functions that delegate to callees).
+records the current call stack at each sample. 
+After enough samples, the aggregate reveals which functions account for the largest share of CPU time. 
+We visualize the output as a flamegraph: 
+each bar represents a function, its width proportional to the fraction of samples in which it appeared on the call stack. 
+Wide bars near the top of the call stack are the hotspots (bars not near the top of the call stacks are from functions that delegate to callees).
 
-**Build Configuration.** We compile the `qlever-server` binary with `RelWithDebInfo` rather than `Release`. Both use the
-same optimization level (TODO: verify), but `RelWithDebInfo` retains debug symbols, which allows `perf` to resolve
-function addresses to human-readable names and to correctly attribute time to inlined call sites. We additionally pass
-`-fno-omit-frame-pointer`, which restores the frame pointer register. This flag restores the frame pointer at negligible
-runtime cost, giving `perf` reliable call stack reconstruction.
+**Build Configuration.** 
+We compile the `qlever-server` binary with `RelWithDebInfo` rather than `Release`. 
+Both use the same optimization level (TODO: verify), but `RelWithDebInfo` retains debug symbols, 
+which allows `perf` to resolve function addresses to human-readable names and to correctly attribute time to inlined call sites. 
+We additionally pass `-fno-omit-frame-pointer`, which restores the frame pointer register. 
+This flag restores the frame pointer at negligible runtime cost, giving `perf` reliable call stack reconstruction.
 
 The cmake command used is:
 `cmake -B build-profile-20260325 \
