@@ -475,12 +475,13 @@ Measurements taken on `construct-pipeline-refactor` branch at `git commit  0480d
 (https://github.com/marvin7122/qlever/commit/0480d959a02b04d69b017364423ce1670ca833d4).
 
 The build was configured using the following CMake settings:
-`cmake -B build-0480d959 \
+```
+cmake -B build \
 -DCMAKE_BUILD_TYPE=Release \
 -DCMAKE_C_COMPILER=gcc \
 -DCMAKE_CXX_COMPILER=g++ \
--DCMAKE_LINKER=/usr/bin/lld`
-
+-DCMAKE_LINKER=/usr/bin/lld
+```
 
 ### Experiment 1: Baseline SPO query
 First, let us use the same `CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }` query from the Problem Statement so we can
@@ -508,11 +509,6 @@ TODO: create script for these measurements and put it into the artefacts sub fol
 The speedup grows with the number of result rows — from roughly 1.6–1.9x at 10k rows to 2.4–2.9x at 1M rows —
 indicating that the optimizations scale well with result set size. This is expected: the benefits of constant
 preprocessing, column-major batch evaluation, and LRU caching all accumulate as more rows are processed.
-
-The pattern across formats mirrors what we observed in the Problem Statement: qleverJson shows the smallest speedup
-(~2.4x at 1M rows) while TSV, CSV, and Turtle show larger gains (~2.7–2.9x). As noted before, the more verbose
-qleverJson format requires more serialization work per row for both implementations, which reduces the relative share
-of the CONSTRUCT-specific overhead that the new implementation eliminates.
 
 ### Experiment 2: Constant preprocessing
 
