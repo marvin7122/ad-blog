@@ -116,9 +116,7 @@ that is, a variable for which the current result row provides no value, that tri
 Triples in the template that contain no variables at all (called ground triples) appear in the output graph unchanged,
 regardless of the result rows.
 
---
-Consider the following CONSTRUCT query applied to our example data:
-
+Consider the following CONSTRUCT query applied to our knowledge base (Listing 1):
 ```sparql
 CONSTRUCT {
 ?person <has-interest> ?thing .
@@ -128,7 +126,7 @@ WHERE {
 }
 ```
 
-This produces the following RDF graph:
+This query produces the following RDF graph as result:
 
 ```ntriples
 <Bob> <has-interest> <the Mona Lisa>.
@@ -145,25 +143,32 @@ Common use cases include extracting a subgraph from a large knowledge base for u
 self-contained RDF file for exchange or archival.
 
 ## QLever 
-"QLever is a graph database implementing the RDF and SPARQL standards. QLever can efficiently load and query very large 
-datasets, even with hundreds of billions of triples, on a single commodity PC or server."[^4]
-It is a open source project written in the programming language C++ developed by the Chair of Algorithms and 
-Data Structures at the University of Freiburg [^5]
+"QLever is a graph database implementing the RDF and SPARQL standards.
+QLever can efficiently load and query very large datasets, 
+even with hundreds of billions of triples, 
+on a single commodity PC or server."[^4]
+It is a open source project  written in the programming language C++ developed 
+by the Chair of Algorithms and  Data Structures at the University of Freiburg [^5]
+
+### Index construction phase 
+1. what is a database index?
+
+
 
 TODO: how does the engine work big picture 
 
 # Problem Statement
 The CONSTRUCT query export takes the result table produced by the WHERE clause and transforms it into an RDF graph by
-instantiating the CONSTRUCT template for each result row. The resulting triples are then serialized into the requested
-output format and streamed to the client.
+instantiating the CONSTRUCT template for each result row. 
+The resulting triples are then serialized into the requested output format and streamed to the client.
 
-To understand whether the old implementation of the CONSTRUCT query export had a meaningful perfomance problem, we
-compare the time QLever takes to export a CONSTRUCT query against an equivalent SELECT query on the same data. Both
-queries run the same WHERE clause and therefore do the same query evaluation work. The only difference between them is
-the export step. Any gap in export time between the two is attributable to the CONSTRUCT export pipeline itself.
+To understand whether the old implementation of the CONSTRUCT query export had a meaningful performance problem, 
+we compare the time QLever takes to export a CONSTRUCT query against an equivalent SELECT query on the same data. 
+Both queries run the same WHERE clause and therefore do the same query evaluation work. 
+The only difference between them is the export step. 
+Any gap in export time between the two is attributable to the CONSTRUCT export pipeline itself.
 
 ## Benchmarking Setup
-
 To measure the cost of the CONSTRUCT export pipeline in isolation, we compare the time QLever takes to answer a
 CONSTRUCT query against an equivalent SELECT query on the same data. Both queries evaluate the same WHERE clause. Any
 perfomance gap between the two is therefore attributable to the CONSTRUCT pipeline itself.
@@ -787,7 +792,7 @@ SPARQL 1.1 and RDF standards. Formulate a set of requirements that capture this 
 5.2) Develop a comprehensive test suite that verifies the pipeline's output against these requirements across a range 
 of query templates, edge cases, and output formats. \
 5.3) Use this test suite as a safety net for future optimizations, 
-ensuring performance improvements do not introduce correctness regressions. \
+ensuring performance improvements do not introduce correctness regressions.
 
 # References
 [^1]: W3 Org. "RDF Primer" https://www.w3.org/TR/rdf11-primer/ Accessed 2026-03-16.
