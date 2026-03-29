@@ -7,12 +7,10 @@ tags: []
 categories: []
 image: "img/writing.jpg"
 ---
-
-The SPARQL CONSTRUCT query form allows clients to extract and transform RDF data into a new graph. 
-In QLever, 
-the original CONSTRUCT export pipeline was up to 2x slower than an equivalent SELECT export on the same data.
-This post describes the analysis of the original implementation, 
-the design and implementation of an improved pipeline, and an empirical evaluation of the speedup achieved, 
+The SPARQL CONSTRUCT query form allows clients to extract and transform RDF data into a new graph.
+In QLever, the original CONSTRUCT export pipeline was up to 2x slower than an equivalent SELECT export on the same data.
+This post describes the analysis of the original implementation, the design and implementation of an improved pipeline,
+an empirical evaluation of the speedup achieved, 
 and a profiling-based analysis of the remaining overhead that motivates concrete directions for future work.
 
 <!--more-->
@@ -31,19 +29,14 @@ and a profiling-based analysis of the remaining overhead that motivates concrete
 - [Discussion](#discussion)
 
 # Introduction
-## RDF
-The Resource Description Framework (RDF) is a method to describe and exchange graph data.[^2]
+In the following we will introduce the concepts which are necessary for understanding the context of the improvements
+to the CONSTRUCT export pipeline.
 
-RDF allows us to make statements about resources. The format of these statements is simple.
-A statement always has the following structure:\
-`<subject> <predicate> <object>`
-
-An RDF statement expresses a relationship between two resources. 
-The subject and the object represent the two resources being related; 
-the predicate represents the nature of their relationship. 
-The relationship is phrased in a directional way (from subject to object). 
-RDF statements are also called triple statements, since one statement consists of three parts: 
-subject, predicate, and object.
+## The RDF data model
+The RDF data model is based on the idea of making statements about resources (in particular web resources) 
+in expressions of the form *subject-predicate-object*, known as *triples*.
+The *subject* denotes the resource, the *predicate* denotes traits or aspects of the resource, 
+and expresses a relationship between the *subject* and the *object*.[^2]
 
 Below is an example of multiple RDF triples, which are seperated by a dot (.) and a newline.
 ```ntriples
@@ -153,15 +146,9 @@ by the Chair of Algorithms and  Data Structures at the University of Freiburg [^
 ### Index construction phase 
 1. what is a database index?
 
-
-
 TODO: how does the engine work big picture 
 
 # Problem Statement
-The CONSTRUCT query export takes the result table produced by the WHERE clause and transforms it into an RDF graph by
-instantiating the CONSTRUCT template for each result row. 
-The resulting triples are then serialized into the requested output format and streamed to the client.
-
 To understand whether the old implementation of the CONSTRUCT query export had a meaningful performance problem, 
 we compare the time QLever takes to export a CONSTRUCT query against an equivalent SELECT query on the same data. 
 Both queries run the same WHERE clause and therefore do the same query evaluation work. 
@@ -236,7 +223,7 @@ TODO: rerun the benchmark at git commit a5e4bf705f003cb3b0477c068966a633a15fb378
 The `SELECT (ms)` and `CONSTRUCT (ms)` columns report the median wall-clock time in milliseconds over the five measured
 runs. The `Ratio` column is the CONSTRUCT time divided by the SELECT time.
 
-**Observation**: The CONSTRUCT export is consitently slower than the equivalent SELECT export acrross all formats and
+**Observation**: The CONSTRUCT export is consistently slower than the equivalent SELECT export acrross all formats and
 row counts. For TSV and CSV the CONSTRUCT export takes approximately 2x as long at 1 million rows. The ratio grows
 slightly with the number of rows (from ~1.6x at 10k rows to ~2x at 1M rows), indicating that the overhead of the
 CONSTRUCT export pipeline scales roughly linearly with the number or result rows.
@@ -358,7 +345,7 @@ The walkthrough above reveals three structural inefficiencies in the original im
 
 **1. Constants are re-evaluated on every row.** \
 Every triple pattern in the CONSTRUCT template is evaluated from scratch for every result row, including constant
-positions, i.e. `Iri` and `Literal` terms whose string representation never changes accross rows. Although evaluating
+positions, i.e. `Iri` and `Literal` terms whose string representation never changes across rows. Although evaluating
 a constant is cheap (it just reads a field already in memory), it is unnecessary work that scales linearly with the
 number of result rows. A one-time preprocessing step before the row loop begins could resolve constants once and reuse
 the result for all rows.
@@ -424,7 +411,7 @@ Second, the `ValueId` values for a single variable column tend to be drawn from 
 For example, all values in a predicate column are predicate Iris, which are clustered together on disk. Sorting those
 `ValueId`s and resolving them in bulk therefore turns scattered disk reads into sequential ones.
 
-Phase 2 exploits both properties by processing one variable column at a time accross a batch of rows, and sorting the
+Phase 2 exploits both properties by processing one variable column at a time across a batch of rows, and sorting the
 `ValueId`s within each column before lookup.
 
 `evaluateBatch` receives `uniqueVariableColumns_` from phase 1 and a `BatchEvaluationContext` describing a contiguous
@@ -760,7 +747,7 @@ latency, ...)? \
 miss rates, eviction counts, and memory footprint per query? Possibly also others?) \
 2.5) How do we measure the chosen optimization target? \
 2.6) How do we approach all of the above in a structured an methodical way? 
-For example by running a representative set  of CONSTRUCT queries accross a range of cache sizes and datasets, 
+For example by running a representative set  of CONSTRUCT queries across a range of cache sizes and datasets, 
 and relating the measurements back to the optimization objective.
 
 3. **Investigate blocking I/O and implement batched disk reads.** \
@@ -776,7 +763,7 @@ A structured investigation would involve: \
 For example replacing individual `pread` calls (system calls that read from disk) for batch misses with batched 
 sequential reads, or prefetching vocabulary entries. Understanding how similar systems approach this is a prerequisite. \
 3.6) Implement the most promising mitigation strategy. \
-3.7) Measure the impact of the implementation accross the same representative queries and datasets, comparing blocking
+3.7) Measure the impact of the implementation across the same representative queries and datasets, comparing blocking
 I/O time, wall-clock time, and cache miss rates before and after.
 
 4. **Eliminate unnecessary work in the export pipeline.** \
@@ -796,7 +783,7 @@ ensuring performance improvements do not introduce correctness regressions.
 
 # References
 [^1]: W3 Org. "RDF Primer" https://www.w3.org/TR/rdf11-primer/ Accessed 2026-03-16.
-[^2]: Wikipedia. "RDF" TODO:wikipedia-link-here Accessed 2026-03-17.
+[^2]: Wikipedia. "RDF" TODO:wikipedia-link-here Accessed 2026-03-29.
 [^3]: W3 Org. "SPARQL 1.1 Query Language" https://www.w3.org/TR/sparql11-query/#introduction Accessed 2026-03-18.
 [^4]: "QLever Documentation" https://docs.qlever.dev/ Accessed 2026-03-18.
 [^5]: "qlever" https://github.com/ad-freiburg/qlever Accessed 2026-03-18.
