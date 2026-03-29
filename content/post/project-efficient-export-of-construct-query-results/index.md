@@ -363,11 +363,11 @@ always resolves to the same string, independent of the particular result table r
 representation constructs a new string object every time.
 
 `ConstructTemplatePreprocessor::preprocess` transforms the raw `GraphTerm` triples from the CONSTRUCT clause into a
-`PreprocessedConstructTemplate`. Each term position is converted into on of three variants:
+`PreprocessedConstructTemplate`. A `GraphTerm` can either be a `Literal`, a `BlankNode`, an `Iri`, or a `Variable`.
+Each `GraphTerm` object is converted into one of three variants:
 
 - `PrecomputedConstant`: for `Iri` and `Literal` terms: the string is resolved immediately and stored as
-`shared_ptr<const EvaluatedTermData>`. Because the object is a shared pointer, the same object is reused for every
-result row without per-row allocation or string copying.
+`shared_ptr<const EvaluatedTermData>`.
 - `PrecomputedVariable`: for `Variable` terms: the variable is resolved to its column index in the `IdTable`.
 - `PrecomputedBlankNode`: for `BlankNode` terms: the prefix (`_:g` for generated blank nodes, `_:u` for user-defined)
 and suffix (_ + label) are precomputed. At row time, only the row number needs to be inserted between them to produce a
