@@ -65,12 +65,10 @@ Triple patterns are like RDF triples except that each of the subject, predicate 
 (a variable is a string that starts with a `?`). 
 A basic graph patterm *matches* a subgraph of the RDF data, 
 when RDF terms from that subgraph may be substituted for the variables and the result is RDF graph equivalent to the subgraph. [^3]
-
 The most common query form for SPARQL queries is `SELECT`: 
 It returnes the results of the query as a table of variable bindings. 
 After the `SELECT` keyword, 
 one specifies which variable bindings should appear in the result table for the query.
-
 See the following example SPARQL SELECT query which queries for the following:
 find everyone (`?person`) who is interested in something (`?thing`) and who created that thing (`?creator`).
 
@@ -81,7 +79,7 @@ SELECT ?person ?thing ?creator WHERE {
 }
 ```
 
-Against our example data (sample data 1), this query returns:
+Against our example data (Listing 1), this query returns:
 
 | ?person | ?thing | ?creator |
 ---------|--------|----------|
@@ -90,7 +88,6 @@ Against our example data (sample data 1), this query returns:
 
 The engine computing the result of the SPARQL query against our knowledge base from above finds all substitutions for
 the variables that make every triple pattern of the WHERE clause hold simultaneously.
-
 Alice's interest in the video does not produce a row because no `<was created by>` triple exists for
 the video; only combinations, where *all* triple patterns of the WHERE clause match, appear in the result.
 
@@ -102,10 +99,8 @@ which is a set of triple patterns that may contain variables and constants
 For each result row (called a query  solution in the SPARQL standard) produced by the WHERE clause, 
 the engine substitutes the bound variable values into the graph template and adds the resulting triples to the output graph.
 The final output of the CONSTRUCT query is the union of all such triples across all result rows.
-
 If any instantiation produces a triple containing an unbound variable: 
 that is, a variable for which the current result row provides no value, that triple is omitted from the output.
-
 Triples in the template that contain no variables at all (called ground triples) appear in the output graph unchanged,
 regardless of the result rows.
 
@@ -120,7 +115,6 @@ WHERE {
 ```
 
 This query produces the following RDF graph as result:
-
 ```ntriples
 <Bob> <has-interest> <the Mona Lisa>.
 <Alice> <has-interest> <the Mona Lisa>.
