@@ -56,6 +56,7 @@ Each RDF triple statement is represented by:
 (1) a node for the subject, 
 (2) a directed edge from subject to object, representing a predicate, and 
 (3) a node for the object.
+A set of RDF triples is also called a *knowledge graph*, or *knowledge base*.
 
 ## SPARQL 
 SPARQL is an RDF query language, that is, a query language for retrieving and manipulating data stored in RDF format.
@@ -104,7 +105,7 @@ that is, a variable for which the current result row provides no value, that tri
 Triples in the template that contain no variables at all (called ground triples) appear in the output graph unchanged,
 regardless of the result rows.
 
-Consider the following CONSTRUCT query applied to our knowledge base (Listing 1):
+Consider the following CONSTRUCT query applied to our knowledge base (Listing 1) (TODO: what even is a KB):
 ```sparql
 CONSTRUCT {
 ?person <has-interest> ?thing .
@@ -123,7 +124,6 @@ This query produces the following RDF graph as result:
 
 Unlike the SELECT query from the previous section, the result is not a table but a new set of RDF triples that can be
 stored, exported, or queried further.
-
 CONSTRUCT queries are particularly useful when the goal is not to inspect data in a table,
 but to export or transform it as RDF.
 Common use cases include extracting a subgraph from a large knowledge base for use in another system or producing a
@@ -137,10 +137,8 @@ on a single commodity PC or server."[^4]
 It is a open source project  written in the programming language C++ developed 
 by the Chair of Algorithms and  Data Structures at the University of Freiburg [^5]
 
-### Index construction phase 
-1. what is a database index?
-
-TODO: how does the engine work big picture 
+TODO: explain how QLever works here. Also state why we are explaining that. because it makes it easier to understand
+what the construct export is and where it fits in in the qlever engine processes.
 
 # Problem Statement
 To understand whether the old implementation of the CONSTRUCT query export had a meaningful performance problem, 
